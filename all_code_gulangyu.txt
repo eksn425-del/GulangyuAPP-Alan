@@ -1,0 +1,168 @@
+================================================================================
+项目全景与架构指南 - 听见·鼓浪屿 (Web + Backend)
+更新时间：基于当前代码库 e:\my-gulangyu 实际结构
+================================================================================
+
+1. 项目目标与系统边界
+本项目是面向视障与行动不便人群的无障碍导览系统，采用前后端分离架构：
+- 前端：React + Vite（交互界面、语音对话、管理台）
+- 后端：FastAPI + SQLite + SQLAlchemy（数据服务、路网算法、AI编排）
+- AI：通过 OpenAI 兼容接口调用 DashScope 模型（qwen-turbo / qwen-vl-max）
+
+项目包含 Unity 联动能力（/api/record_hazard），用于风险上报与分析闭环。
+
+================================================================================
+2. 目录结构与职责分层
+================================================================================
+${PROJECT_ROOT} (e:\my-gulangyu)
+├── backend/
+│   ├── main.py                      [FastAPI入口，全部API与AI会话编排]
+│   ├── graph_engine.py              [路网构图与路径计算核心]
+│   ├── database.py                  [SQLite结构、初始化与SQLAlchemy模型]
+│   ├── analysis.py                  [事故日志统计接口支撑]
+│   ├── evaluate_real_users.py       [真实用户文本样本评测]
+│   ├── tst_report.py                [评测兼容入口脚本]
+│   ├── real_user_samples.csv        [真实用户样本CSV模板]
+│   ├── static/                      [图片/音频等静态资源]
+│   ├── gulangyu.db                  [业务数据库]
+│   └── .env                         [密钥与环境变量]
+├── src/
+│   ├── main.jsx                     [前端入口]
+│   ├── App.jsx                      [主应用与管理界面]
+│   ├── AiPage.jsx                   [AI对话页]
+│   ├── config.js                    [前端API配置]
+│   └── assets/                      [前端静态资源]
+├── public/                          [Vite公共资源]
+├── package.json                     [前端依赖与脚本]
+├── vite.config.js                   [本地代理配置]
+└── all_code_gulangyu.txt            [本文档]
+
+补充说明：
+- pictures/backend 是镜像目录，不是当前主运行后端，常规开发应以 backend/ 为准。
+
+================================================================================
+3. 入口函数、关键依赖与配置参数
+================================================================================
+3.1 前端入口
+- 入口文件：src/main.jsx
+- 根组件：<App />
+- 开发启动：npm run dev
+- 代理配置：vite.config.js 将 /api 与 /static 转发到 http://127.0.0.1:8000
+
+3.2 后端入口
+- 主入口：backend/main.py
+- 实例化：app = FastAPI()
+- 启动方式：
+  - 开发：uvicorn main:app --reload（在 backend/ 下）
+  - 脚本：python main.py（内置 uvicorn.run）
+
+3.3 后端关键依赖（代码可见）
+- FastAPI / Pydantic / SQLAlchemy
+- OpenAI SDK（作为 DashScope 兼容调用客户端）
+- pypinyin、difflib（中文地名容错识别）
+- networkx（图搜索与多路径）
+- pandas（统计分析）
+
+3.4 关键配置参数
+- DASHSCOPE_API_KEY：从环境变量读取（.env 可配置）
+- 静态目录：/static/images、/static/audio
+- 管理密码：x-admin-password（用于统计与建筑管理接口）
+
+================================================================================
+4. 后端 API 全量视图（当前实现）
+================================================================================
+健康与基础：
+- GET  /api/health
+- GET  /api/buildings
+- GET  /api/buildings/{building_id}
+
+上传与识别：
+- POST /api/upload/image
+- POST /api/upload/audio
+- POST /api/chat
+- POST /api/vision
+
+导航与统计：
+- GET  /api/route
+  参数：start, end, user_type, user_bearing, max_routes, strategy
+  strategy：safest | shortest
+- GET  /api/stats（需 x-admin-password）
+
+风险上报：
+- POST /api/record_hazard
+
+后台管理（建筑）：
+- POST   /api/buildings（需 x-admin-password）
+- PUT    /api/buildings/{building_id}（需 x-admin-password）
+- DELETE /api/buildings/{building_id}（代码中存在重复定义，见第8节）
+
+================================================================================
+5. 核心业务逻辑（可追溯主链）
+================================================================================
+5.1 AI语音导览链路（/api/chat）
+1) 前端 AiPage 发送 message、user_bearing、strategy
+2) main.py 进行地名识别：
+   - 别名匹配 PLACE_ALIASES
+   - 拼音匹配 PLACE_PINYIN / PREFIX
+   - 模糊匹配 fuzzy_substring_details
+3) 识别出起终点后调用 route_engine.get_safest_route()
+4) 将路径步骤注入 system prompt，约束“左转/右转/直行”播报
+5) 调用 qwen-turbo 生成回答
+6) 返回：
+   - reply
+   - debug_info（识别地点、分数、strategy、latency_ms）
+
+5.2 路径规划链路（graph_engine.py）
+1) 从 SQLite 读取 accessibility_nodes 与 roads 构图
+2) 计算边属性：distance（Haversine）、slope、friction
+3) 路由策略：
+   - shortest：仅 distance 权重（A组）
+   - safest：distance + slope + friction（B组）
+4) 使用 shortest_simple_paths 取候选路径并去重
+5) 输出 steps（转向指令、距离、材质、备注）与总里程
+
+5.3 风险数据链路（Unity/Web -> /api/record_hazard）
+1) 客户端上报 hazard_type/obstacle_type + xyz + 时间
+2) main.py 写入 SQLAlchemy 表 hazard_logs
+3) analysis.py 提供统计输出（/api/stats 消费）
+
+================================================================================
+6. 前端模块与后端依赖关系
+================================================================================
+App.jsx：
+- 主页面、管理端、视觉识别入口
+- 调用 /api/buildings、/api/upload/*、/api/vision、管理CRUD接口
+
+AiPage.jsx：
+- AI对话入口
+- 调用 /api/chat
+- 支持语音与文本输入
+
+config.js：
+- API_BASE_URL 与统一请求头配置
+
+================================================================================
+7. 测试与评估脚本（当前可用）
+================================================================================
+- python backend/evaluate_real_users.py --csv backend/real_user_samples.csv --score-threshold 0.85
+- python backend/tst_report.py --csv backend/real_user_samples.csv --score-threshold 0.85
+
+评测脚本输出：
+- 样本总数、通过数、准确率、平均耗时、Bad Cases 列表
+
+================================================================================
+8. 当前实现注意事项（避免误判）
+================================================================================
+1) main.py 中 DELETE /api/buildings/{building_id} 出现重复定义，
+   后定义版本可能覆盖前定义版本，需注意权限行为是否符合预期。
+2) init_db 在 main.py 中未自动执行，数据库初始化依赖外部脚本/历史数据。
+3) /api/route 当前是 GET（不是 POST），测试文档需与实现保持一致。
+
+================================================================================
+9. AI 接手修改准则
+================================================================================
+1) 改路网数据：优先修改 backend/database.py 的节点与道路数据，再重建数据库。
+2) 改寻路算法：只改 backend/graph_engine.py，并回归 /api/route。
+3) 改AI话术/识别：只改 backend/main.py 的 /api/chat 相关逻辑。
+4) 改前端接口行为：同时检查 src/config.js、src/App.jsx、src/AiPage.jsx。
+5) 改测试口径：同步更新 evaluate_real_users.py、tst_report.py 与测试手册。

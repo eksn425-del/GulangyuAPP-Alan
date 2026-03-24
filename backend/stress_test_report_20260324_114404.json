@@ -1,0 +1,415 @@
+{
+  "summary": {
+    "total": 1000,
+    "algo_success": 775,
+    "accuracy_rate": 0.775,
+    "baseline_accuracy_rate": 0.469,
+    "improvement_pct": 30.6,
+    "avg_latency_ms": 650.41,
+    "p90_latency_ms": 773.21,
+    "sop_accuracy_pass": false,
+    "sop_latency_pass": false,
+    "scene_stats": {
+      "单终点导航": {
+        "total": 178,
+        "success": 0
+      },
+      "同音字错误": {
+        "total": 225,
+        "success": 222
+      },
+      "标准输入": {
+        "total": 157,
+        "success": 157
+      },
+      "别名输入": {
+        "total": 107,
+        "success": 102
+      },
+      "闲聊非导航": {
+        "total": 160,
+        "success": 160
+      },
+      "缺字跳字": {
+        "total": 173,
+        "success": 134
+      }
+    },
+    "fail_reasons": {
+      "END_MISMATCH": 218,
+      "MISSED_NAV_INTENT": 7
+    }
+  },
+  "bad_cases": [
+    {
+      "input": "去李传别宅",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "李传别宅",
+      "has_nav_intent": true,
+      "latency_ms": 35.06,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "李传别宅",
+              "node_id": "node_xm_glangyu_18",
+              "score": 1.0,
+              "method": "exact",
+              "position": 1
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 19.21,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "带我到黄荣远堂",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "黄荣远堂",
+      "has_nav_intent": true,
+      "latency_ms": 525.29,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "黄荣远堂",
+              "node_id": "node_xm_glangyu_20",
+              "score": 1.0,
+              "method": "exact",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 39.9,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "前往李传别宅",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "李传别宅",
+      "has_nav_intent": true,
+      "latency_ms": 627.56,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "李传别宅",
+              "node_id": "node_xm_glangyu_18",
+              "score": 1.0,
+              "method": "exact",
+              "position": 2
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 31.18,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "怎么去海天堂构",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "海天堂构",
+      "has_nav_intent": true,
+      "latency_ms": 576.03,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "海天堂构",
+              "node_id": "node_xm_glangyu_19",
+              "score": 1.0,
+              "method": "exact",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 30.78,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "怎么走到海天堂构",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "海天堂构",
+      "has_nav_intent": true,
+      "latency_ms": 519.93,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "海天堂构",
+              "node_id": "node_xm_glangyu_19",
+              "score": 1.0,
+              "method": "exact",
+              "position": 4
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 41.95,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "去李传别宅",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "李传别宅",
+      "has_nav_intent": true,
+      "latency_ms": 483.23,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "李传别宅",
+              "node_id": "node_xm_glangyu_18",
+              "score": 1.0,
+              "method": "exact",
+              "position": 1
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 19.55,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "怎么到海天堂构啊",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "海天堂构",
+      "has_nav_intent": true,
+      "latency_ms": 583.88,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "海天堂构",
+              "node_id": "node_xm_glangyu_19",
+              "score": 1.0,
+              "method": "exact",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 35.87,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "许园到仰高",
+      "scene": "缺字跳字",
+      "match_level_expected": "fuzzy",
+      "expected_start": "许家园",
+      "expected_end": "仰高别墅",
+      "has_nav_intent": true,
+      "latency_ms": 609.73,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "仰高别墅",
+              "node_id": "node_xm_glangyu_21",
+              "score": 0.9,
+              "method": "alias",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 18.22,
+          "test_mode": true,
+          "match_method": "alias"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "alias"
+    },
+    {
+      "input": "带我去黄荣远堂嗯",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "黄荣远堂",
+      "has_nav_intent": true,
+      "latency_ms": 618.35,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "黄荣远堂",
+              "node_id": "node_xm_glangyu_20",
+              "score": 1.0,
+              "method": "exact",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 42.5,
+          "test_mode": true,
+          "match_method": "exact"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "exact"
+    },
+    {
+      "input": "带我去黄荣嗯远堂",
+      "scene": "单终点导航",
+      "match_level_expected": "exact",
+      "expected_start": null,
+      "expected_end": "黄荣远堂",
+      "has_nav_intent": true,
+      "latency_ms": 665.72,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "黄荣远堂",
+              "node_id": "node_xm_glangyu_20",
+              "score": 0.9714,
+              "method": "pinyin_fuzzy",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": null,
+          "matched_start_score": null,
+          "matched_end_score": null,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 47.36,
+          "test_mode": true,
+          "match_method": "pinyin_fuzzy"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "END_MISMATCH",
+      "match_method_actual": "pinyin_fuzzy"
+    }
+  ]
+}

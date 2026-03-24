@@ -1,0 +1,632 @@
+# 任务：为鼓浪屿导航系统构建符合SOP要求的完整1000条压测体系
+# 要求一步到位：修复代码 → 安装依赖 → 启动后端 → 跑完测试 → 生成所有图表
+
+## STEP 1：修改 backend/main.py，添加 test_mode 字段
+
+找到 ChatRequest 这个 Pydantic 模型，新增一个字段：
+    test_mode: bool = False
+
+找到调用 client.chat.completions.create(...) 的代码块，用以下逻辑替换：
+
+    if request.test_mode:
+        ai_reply = "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。"
+    else:
+        response = client.chat.completions.create(
+            model="qwen-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": corrected_user_msg}
+            ]
+        )
+        ai_reply = response.choices[0].message.content
+
+在返回的 debug_info 字典中，新增以下字段：
+    "test_mode": request.test_mode,
+    "match_method": next((item.get("method") for item in mentioned_nodes), None),
+
+注意：match_method 的值来自 mentioned_nodes 列表中第一个识别到的地点
+的 method 字段（可能是 exact / alias / pinyin / pinyin_fuzzy / fuzzy）。
+
+除以上两处修改外，main.py 其他任何代码一律不动。
+
+---
+
+## STEP 2：创建 backend/stress_test.py（完整新文件）
+```python
+"""
+鼓浪屿导航系统 - 1000条并发压测脚本
+产出物：accuracy_chart.png / confusion_matrix.png / baseline_comparison.png
+       stress_test_results.csv / stress_test_report.json
+"""
+import asyncio
+import aiohttp
+import json
+import time
+import random
+import argparse
+import os
+import csv
+from datetime import datetime
+from collections import defaultdict
+
+# ============================================================
+# 1. 30条种子测试用例（覆盖6大场景）
+# ============================================================
+PLACE_NAMES = ["协和礼拜堂", "海天堂构", "黄荣远堂", "李传别宅", "许家园", "天主教堂", "仰高别墅"]
+
+SEED_CASES = [
+    # 场景A：标准输入
+    {"input": "从协和礼拜堂到海天堂构怎么走", "expected_start": "协和礼拜堂", "expected_end": "海天堂构", "has_nav_intent": True, "scene": "标准输入", "match_level_expected": "exact"},
+    {"input": "带我从许家园去黄荣远堂", "expected_start": "许家园", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "标准输入", "match_level_expected": "exact"},
+    {"input": "从天主教堂走到仰高别墅", "expected_start": "天主教堂", "expected_end": "仰高别墅", "has_nav_intent": True, "scene": "标准输入", "match_level_expected": "exact"},
+    {"input": "从李传别宅去协和礼拜堂", "expected_start": "李传别宅", "expected_end": "协和礼拜堂", "has_nav_intent": True, "scene": "标准输入", "match_level_expected": "exact"},
+    {"input": "从海天堂构到黄荣远堂", "expected_start": "海天堂构", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "标准输入", "match_level_expected": "exact"},
+
+    # 场景B：同音字错误
+    {"input": "从鞋盒礼拜堂到海甜烫够", "expected_start": "协和礼拜堂", "expected_end": "海天堂构", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "理船别宅到黄蓉远塘怎么走", "expected_start": "李传别宅", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "从徐佳远去仰高别墅", "expected_start": "许家园", "expected_end": "仰高别墅", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "甜竹教堂怎么去海天堂构", "expected_start": "天主教堂", "expected_end": "海天堂构", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "从携河礼拜堂到李船别宅", "expected_start": "协和礼拜堂", "expected_end": "李传别宅", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "海田烫够到黄蓉远堂", "expected_start": "海天堂构", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+    {"input": "羊羔别墅到徐家园怎么走", "expected_start": "仰高别墅", "expected_end": "许家园", "has_nav_intent": True, "scene": "同音字错误", "match_level_expected": "alias"},
+
+    # 场景C：缺字跳字
+    {"input": "从协和教堂到黄荣堂", "expected_start": "协和礼拜堂", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "缺字跳字", "match_level_expected": "pinyin_fuzzy"},
+    {"input": "李传宅到海天构怎么去", "expected_start": "李传别宅", "expected_end": "海天堂构", "has_nav_intent": True, "scene": "缺字跳字", "match_level_expected": "fuzzy"},
+    {"input": "许园去仰高", "expected_start": "许家园", "expected_end": "仰高别墅", "has_nav_intent": True, "scene": "缺字跳字", "match_level_expected": "fuzzy"},
+    {"input": "从黄荣堂到天主堂", "expected_start": "黄荣远堂", "expected_end": "天主教堂", "has_nav_intent": True, "scene": "缺字跳字", "match_level_expected": "fuzzy"},
+    {"input": "协和堂到李传宅", "expected_start": "协和礼拜堂", "expected_end": "李传别宅", "has_nav_intent": True, "scene": "缺字跳字", "match_level_expected": "fuzzy"},
+
+    # 场景D：别名输入
+    {"input": "从海天到礼拜堂怎么走", "expected_start": "海天堂构", "expected_end": "协和礼拜堂", "has_nav_intent": True, "scene": "别名输入", "match_level_expected": "alias"},
+    {"input": "羊羔别墅到黄荣远堂", "expected_start": "仰高别墅", "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "别名输入", "match_level_expected": "alias"},
+    {"input": "从协和去海天", "expected_start": "协和礼拜堂", "expected_end": "海天堂构", "has_nav_intent": True, "scene": "别名输入", "match_level_expected": "alias"},
+
+    # 场景E：单终点导航
+    {"input": "怎么去海天堂构", "expected_start": None, "expected_end": "海天堂构", "has_nav_intent": True, "scene": "单终点导航", "match_level_expected": "exact"},
+    {"input": "带我去黄荣远堂", "expected_start": None, "expected_end": "黄荣远堂", "has_nav_intent": True, "scene": "单终点导航", "match_level_expected": "exact"},
+    {"input": "我要去协和礼拜堂", "expected_start": None, "expected_end": "协和礼拜堂", "has_nav_intent": True, "scene": "单终点导航", "match_level_expected": "exact"},
+    {"input": "前往李传别宅", "expected_start": None, "expected_end": "李传别宅", "has_nav_intent": True, "scene": "单终点导航", "match_level_expected": "exact"},
+    {"input": "导航到天主教堂", "expected_start": None, "expected_end": "天主教堂", "has_nav_intent": True, "scene": "单终点导航", "match_level_expected": "exact"},
+
+    # 场景F：闲聊非导航
+    {"input": "协和礼拜堂有什么历史", "expected_start": None, "expected_end": None, "has_nav_intent": False, "scene": "闲聊非导航", "match_level_expected": None},
+    {"input": "海天堂构好玩吗", "expected_start": None, "expected_end": None, "has_nav_intent": False, "scene": "闲聊非导航", "match_level_expected": None},
+    {"input": "黄荣远堂是什么建筑风格", "expected_start": None, "expected_end": None, "has_nav_intent": False, "scene": "闲聊非导航", "match_level_expected": None},
+    {"input": "许家园的历史介绍一下", "expected_start": None, "expected_end": None, "has_nav_intent": False, "scene": "闲聊非导航", "match_level_expected": None},
+    {"input": "天主教堂什么时候建的", "expected_start": None, "expected_end": None, "has_nav_intent": False, "scene": "闲聊非导航", "match_level_expected": None},
+]
+
+FROM_SYNONYMS = ["从", "由", "自"]
+TO_SYNONYMS = ["到", "去", "前往", "走到"]
+FILLER_WORDS = ["啊", "那个", "嗯", "就是"]
+
+def augment_case(case):
+    text = case["input"]
+    augmented = case.copy()
+    if random.random() > 0.5:
+        for word in FROM_SYNONYMS:
+            if word in text:
+                text = text.replace(word, random.choice(FROM_SYNONYMS), 1)
+                break
+    if random.random() > 0.5:
+        for word in TO_SYNONYMS:
+            if word in text:
+                text = text.replace(word, random.choice(TO_SYNONYMS), 1)
+                break
+    if random.random() > 0.6:
+        insert_pos = random.randint(0, len(text))
+        text = text[:insert_pos] + random.choice(FILLER_WORDS) + text[insert_pos:]
+    if random.random() > 0.5:
+        text = text.replace("，", "").replace("。", "").replace("？", "")
+    augmented["input"] = text
+    return augmented
+
+def build_test_suite(target_count=1000):
+    suite = list(SEED_CASES)
+    random.seed(42)
+    while len(suite) < target_count:
+        suite.append(augment_case(random.choice(SEED_CASES)))
+    return suite[:target_count]
+
+# ============================================================
+# 2. 基线对照组（模拟直接数据库查询，无容错能力）
+# ============================================================
+def baseline_exact_match(user_input, place_names):
+    """模拟没有算法的直接字符串匹配（基线对照组）"""
+    for name in place_names:
+        if name in user_input:
+            return name
+    return None
+
+def evaluate_baseline(test_cases):
+    """统计基线准确率"""
+    success = 0
+    for case in test_cases:
+        if not case.get("has_nav_intent"):
+            success += 1
+            continue
+        expected_end = case.get("expected_end")
+        if expected_end is None:
+            success += 1
+            continue
+        result = baseline_exact_match(case["input"], PLACE_NAMES)
+        if result and case["expected_end"][:2] in (result or ""):
+            success += 1
+    return success / len(test_cases)
+
+# ============================================================
+# 3. 评估函数
+# ============================================================
+def evaluate_result(test_case, response_json, latency_ms):
+    if response_json is None:
+        return False, "TIMEOUT", None
+    debug = response_json.get("debug_info", {})
+    actual_end = debug.get("matched_end_place") or ""
+    actual_start = debug.get("matched_start_place") or ""
+    actual_nav_intent = debug.get("navigation_intent", False)
+    match_method = debug.get("match_method")
+
+    expected_end = test_case.get("expected_end")
+    expected_start = test_case.get("expected_start")
+    has_nav_intent = test_case.get("has_nav_intent", True)
+
+    if not has_nav_intent:
+        if actual_nav_intent:
+            return False, "FALSE_NAV_TRIGGER", match_method
+        return True, None, "non_nav"
+
+    if has_nav_intent and not actual_nav_intent and expected_end is not None:
+        return False, "MISSED_NAV_INTENT", match_method
+
+    if expected_end is not None:
+        if expected_end[:2] not in actual_end:
+            return False, "END_MISMATCH", match_method
+
+    if expected_start is not None:
+        if expected_start[:2] not in actual_start:
+            return False, "START_MISMATCH", match_method
+
+    return True, None, match_method
+
+# ============================================================
+# 4. 异步请求
+# ============================================================
+async def send_one_request(session, test_case, semaphore, url):
+    async with semaphore:
+        start_time = time.perf_counter()
+        result = {
+            "input": test_case["input"],
+            "scene": test_case.get("scene", "unknown"),
+            "match_level_expected": test_case.get("match_level_expected"),
+            "expected_start": test_case.get("expected_start"),
+            "expected_end": test_case.get("expected_end"),
+            "has_nav_intent": test_case.get("has_nav_intent", True),
+            "latency_ms": 0,
+            "http_status": None,
+            "response_json": None,
+            "is_success": False,
+            "fail_reason": None,
+            "match_method_actual": None,
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            payload = {"message": test_case["input"], "test_mode": True,
+                       "strategy": "safest", "asr_confidence": None, "user_bearing": None}
+            async with session.post(url, json=payload, timeout=timeout) as resp:
+                result["http_status"] = resp.status
+                result["latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+                if resp.status == 200:
+                    result["response_json"] = await resp.json()
+                else:
+                    result["fail_reason"] = "HTTP_ERROR"
+                    return result
+        except asyncio.TimeoutError:
+            result["latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+            result["fail_reason"] = "TIMEOUT"
+            return result
+        except aiohttp.ClientConnectorError:
+            print("\n❌ 无法连接到后端！请先执行: uvicorn main:app --reload")
+            raise SystemExit(1)
+
+        is_success, fail_reason, match_method = evaluate_result(
+            test_case, result["response_json"], result["latency_ms"])
+        result["is_success"] = is_success
+        result["fail_reason"] = fail_reason
+        result["match_method_actual"] = match_method
+        return result
+
+# ============================================================
+# 5. 主压测
+# ============================================================
+async def run_stress_test(url, concurrency, count):
+    test_suite = build_test_suite(count)
+    semaphore = asyncio.Semaphore(concurrency)
+    results = []
+    print(f"\n{'='*60}")
+    print(f"🚀 鼓浪屿导航系统压测启动 | 并发:{concurrency} | 总数:{count}")
+    print(f"{'='*60}")
+    connector = aiohttp.TCPConnector(limit=concurrency)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tasks = [send_one_request(session, case, semaphore, url) for case in test_suite]
+        completed = 0
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+            completed += 1
+            if completed % 100 == 0 or completed == count:
+                rate = sum(1 for r in results if r["is_success"]) / completed * 100
+                print(f"  进度: {completed}/{count} | 实时准确率: {rate:.1f}%")
+    return results, test_suite
+
+# ============================================================
+# 6. 图表生成（关键：生成作品集所需图表）
+# ============================================================
+def generate_charts(results, test_suite, output_dir):
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.font_manager as fm
+        import numpy as np
+
+        # 尝试设置中文字体
+        chinese_fonts = ['SimHei', 'Microsoft YaHei', 'STHeiti', 'WenQuanYi Micro Hei', 'Noto Sans CJK SC']
+        font_set = False
+        for font_name in chinese_fonts:
+            try:
+                plt.rcParams['font.sans-serif'] = [font_name]
+                plt.rcParams['axes.unicode_minus'] = False
+                font_set = True
+                break
+            except:
+                continue
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # --- 图表1：accuracy_chart.png（各匹配级别命中率条形图）---
+        method_stats = defaultdict(lambda: {"total": 0, "success": 0})
+        for r in results:
+            method = r.get("match_method_actual") or "none"
+            method_stats[method]["total"] += 1
+            if r["is_success"]:
+                method_stats[method]["success"] += 1
+
+        method_labels = {
+            "exact": "精确匹配\n(Exact)",
+            "alias": "别名匹配\n(Alias)",
+            "pinyin": "拼音匹配\n(Pinyin)",
+            "pinyin_fuzzy": "拼音模糊\n(Pinyin Fuzzy)",
+            "fuzzy": "字符模糊\n(Fuzzy)",
+            "non_nav": "非导航意图\n(Non-Nav)",
+            "none": "未识别\n(None)"
+        }
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        fig.patch.set_facecolor('#f8f9fa')
+
+        # 左图：各级别命中率
+        ax1 = axes[0]
+        methods = [m for m in ["exact", "alias", "pinyin", "pinyin_fuzzy", "fuzzy", "non_nav"] if m in method_stats]
+        rates = [method_stats[m]["success"] / method_stats[m]["total"] * 100 if method_stats[m]["total"] > 0 else 0 for m in methods]
+        counts = [method_stats[m]["total"] for m in methods]
+        labels = [method_labels.get(m, m) for m in methods]
+        colors = ['#2ecc71', '#3498db', '#9b59b6', '#e67e22', '#e74c3c', '#95a5a6'][:len(methods)]
+
+        bars = ax1.bar(labels, rates, color=colors, edgecolor='white', linewidth=1.5, zorder=3)
+        ax1.set_ylim(0, 110)
+        ax1.set_ylabel('Hit Rate (%)', fontsize=12, fontweight='bold')
+        ax1.set_title('Match Level Hit Rate\n(by Algorithm Type)', fontsize=13, fontweight='bold', pad=15)
+        ax1.axhline(y=85, color='red', linestyle='--', linewidth=2, label='SOP Threshold (85%)', zorder=4)
+        ax1.legend(fontsize=10)
+        ax1.set_facecolor('#fdfdfd')
+        ax1.grid(axis='y', alpha=0.4, zorder=0)
+
+        for bar, rate, count in zip(bars, rates, counts):
+            ax1.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 1,
+                    f'{rate:.1f}%\n(n={count})', ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+        # 右图：各场景准确率
+        ax2 = axes[1]
+        scene_stats = defaultdict(lambda: {"total": 0, "success": 0})
+        for r in results:
+            scene_stats[r["scene"]]["total"] += 1
+            if r["is_success"]:
+                scene_stats[r["scene"]]["success"] += 1
+
+        scenes = list(scene_stats.keys())
+        scene_rates = [scene_stats[s]["success"] / scene_stats[s]["total"] * 100 for s in scenes]
+        scene_colors = ['#1abc9c', '#3498db', '#9b59b6', '#f39c12', '#e74c3c', '#2c3e50'][:len(scenes)]
+
+        bars2 = ax2.barh(scenes, scene_rates, color=scene_colors, edgecolor='white', linewidth=1.5, zorder=3)
+        ax2.set_xlim(0, 115)
+        ax2.set_xlabel('Accuracy (%)', fontsize=12, fontweight='bold')
+        ax2.set_title('Accuracy by Test Scene', fontsize=13, fontweight='bold', pad=15)
+        ax2.axvline(x=85, color='red', linestyle='--', linewidth=2, label='SOP Threshold', zorder=4)
+        ax2.legend(fontsize=10)
+        ax2.set_facecolor('#fdfdfd')
+        ax2.grid(axis='x', alpha=0.4, zorder=0)
+
+        for bar, rate in zip(bars2, scene_rates):
+            ax2.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2.,
+                    f'{rate:.1f}%', va='center', fontsize=10, fontweight='bold')
+
+        plt.tight_layout(pad=3)
+        chart_path = os.path.join(output_dir, 'accuracy_chart.png')
+        plt.savefig(chart_path, dpi=150, bbox_inches='tight', facecolor='#f8f9fa')
+        plt.close()
+        print(f"  ✅ accuracy_chart.png 已生成")
+
+        # --- 图表2：confusion_matrix.png ---
+        fig2, ax = plt.subplots(figsize=(10, 8))
+        fig2.patch.set_facecolor('#f8f9fa')
+
+        places_short = ["协和礼拜堂", "海天堂构", "黄荣远堂", "李传别宅", "许家园", "天主教堂", "仰高别墅"]
+        matrix = np.zeros((len(places_short), len(places_short) + 1))
+
+        for r in results:
+            if not r.get("has_nav_intent") or r.get("expected_end") is None:
+                continue
+            expected = r.get("expected_end", "")
+            actual = (r.get("response_json") or {}).get("debug_info", {}).get("matched_end_place") or ""
+            exp_idx = next((i for i, p in enumerate(places_short) if p[:2] in expected), -1)
+            act_idx = next((i for i, p in enumerate(places_short) if p[:2] in actual), len(places_short))
+            if exp_idx >= 0:
+                matrix[exp_idx][act_idx] += 1
+
+        # 归一化
+        row_sums = matrix.sum(axis=1, keepdims=True)
+        matrix_norm = np.divide(matrix, row_sums, where=row_sums != 0) * 100
+
+        col_labels = places_short + ["未识别"]
+        im = ax.imshow(matrix_norm, cmap='Blues', aspect='auto', vmin=0, vmax=100)
+        plt.colorbar(im, ax=ax, label='Recognition Rate (%)')
+
+        ax.set_xticks(range(len(col_labels)))
+        ax.set_yticks(range(len(places_short)))
+        ax.set_xticklabels(col_labels, rotation=35, ha='right', fontsize=10)
+        ax.set_yticklabels(places_short, fontsize=10)
+        ax.set_xlabel('Recognized As (Actual)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('True Label (Expected)', fontsize=12, fontweight='bold')
+        ax.set_title('Confusion Matrix: Place Recognition\n(Color = % of row correctly/incorrectly classified)',
+                    fontsize=12, fontweight='bold', pad=15)
+
+        for i in range(len(places_short)):
+            for j in range(len(col_labels)):
+                val = matrix_norm[i][j]
+                if val > 0:
+                    color = 'white' if val > 50 else 'black'
+                    ax.text(j, i, f'{val:.0f}%', ha='center', va='center',
+                           fontsize=9, color=color, fontweight='bold')
+
+        plt.tight_layout()
+        cm_path = os.path.join(output_dir, 'confusion_matrix.png')
+        plt.savefig(cm_path, dpi=150, bbox_inches='tight', facecolor='#f8f9fa')
+        plt.close()
+        print(f"  ✅ confusion_matrix.png 已生成")
+
+        # --- 图表3：baseline_comparison.png（算法 vs 基线对照）---
+        baseline_rate = evaluate_baseline(test_suite) * 100
+        algo_rate = sum(1 for r in results if r["is_success"]) / len(results) * 100
+
+        fig3, ax3 = plt.subplots(figsize=(8, 5))
+        fig3.patch.set_facecolor('#f8f9fa')
+
+        categories = ['Baseline\n(Direct DB Lookup)', 'Our Algorithm\n(5-Level Fuzzy Match)']
+        values = [baseline_rate, algo_rate]
+        bar_colors = ['#bdc3c7', '#2ecc71']
+        bars3 = ax3.bar(categories, values, color=bar_colors, edgecolor='white',
+                        linewidth=2, width=0.5, zorder=3)
+        ax3.set_ylim(0, 115)
+        ax3.set_ylabel('Recognition Accuracy (%)', fontsize=13, fontweight='bold')
+        ax3.set_title('Algorithm vs Baseline Comparison\n(Fuzzy Matching vs Direct String Search)',
+                     fontsize=13, fontweight='bold', pad=15)
+        ax3.axhline(y=85, color='red', linestyle='--', linewidth=2,
+                   label='SOP Requirement (85%)', zorder=4)
+        ax3.legend(fontsize=11)
+        ax3.set_facecolor('#fdfdfd')
+        ax3.grid(axis='y', alpha=0.4, zorder=0)
+
+        for bar, val in zip(bars3, values):
+            ax3.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 1.5,
+                    f'{val:.1f}%', ha='center', va='bottom', fontsize=14, fontweight='bold')
+
+        improvement = algo_rate - baseline_rate
+        ax3.annotate('', xy=(1, algo_rate), xytext=(0, baseline_rate),
+                    arrowprops=dict(arrowstyle='->', color='#e74c3c', lw=2.5))
+        mid_x = 0.5
+        mid_y = (baseline_rate + algo_rate) / 2
+        ax3.text(mid_x + 0.05, mid_y, f'+{improvement:.1f}%\nimprovement',
+                fontsize=11, color='#e74c3c', fontweight='bold', ha='left')
+
+        plt.tight_layout()
+        comp_path = os.path.join(output_dir, 'baseline_comparison.png')
+        plt.savefig(comp_path, dpi=150, bbox_inches='tight', facecolor='#f8f9fa')
+        plt.close()
+        print(f"  ✅ baseline_comparison.png 已生成")
+
+        return True
+    except ImportError:
+        print("  ⚠️ matplotlib 未安装，跳过图表生成。执行: pip install matplotlib numpy")
+        return False
+
+# ============================================================
+# 7. 报告生成
+# ============================================================
+def generate_report(results, test_suite, output_dir):
+    total = len(results)
+    http_success = sum(1 for r in results if r["http_status"] == 200)
+    algo_success = sum(1 for r in results if r["is_success"])
+    timeouts = sum(1 for r in results if r["fail_reason"] == "TIMEOUT")
+
+    latencies = sorted([r["latency_ms"] for r in results if r["http_status"] == 200 and r["latency_ms"] > 0])
+
+    def pct(data, p):
+        if not data: return 0
+        return data[min(int(len(data) * p / 100), len(data)-1)]
+
+    avg_lat = sum(latencies) / len(latencies) if latencies else 0
+    under_100 = sum(1 for l in latencies if l <= 100) / len(latencies) * 100 if latencies else 0
+    under_500 = sum(1 for l in latencies if l <= 500) / len(latencies) * 100 if latencies else 0
+    baseline_rate = evaluate_baseline(test_suite) * 100
+
+    scene_stats = defaultdict(lambda: {"total": 0, "success": 0})
+    fail_reasons = defaultdict(int)
+    for r in results:
+        scene_stats[r["scene"]]["total"] += 1
+        if r["is_success"]:
+            scene_stats[r["scene"]]["success"] += 1
+        if not r["is_success"] and r["fail_reason"]:
+            fail_reasons[r["fail_reason"]] += 1
+
+    accuracy_rate = algo_success / total
+    improvement = accuracy_rate * 100 - baseline_rate
+
+    lines = [
+        "=" * 62,
+        "  鼓浪屿导航系统 | 1000条压测完整报告",
+        f"  生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 62,
+        "",
+        "【核心指标对照 SOP 验收标准】",
+        f"  意图识别准确率:    {accuracy_rate*100:.1f}%   {'✅ 达标' if accuracy_rate >= 0.85 else '❌ 未达标'}  (SOP要求 ≥85%)",
+        f"  平均响应时间:      {avg_lat:.0f}ms     {'✅ 达标' if avg_lat <= 100 else '❌ 未达标'}  (SOP要求 ≤100ms)",
+        f"  ≤500ms 达标率:     {under_500:.1f}%",
+        f"  vs 基线提升:       +{improvement:.1f}%  (基线={baseline_rate:.1f}% → 算法={accuracy_rate*100:.1f}%)",
+        "",
+        "【总体请求统计】",
+        f"  总请求数:          {total}",
+        f"  HTTP成功:          {http_success} ({http_success/total*100:.1f}%)",
+        f"  算法识别成功:      {algo_success} ({accuracy_rate*100:.1f}%)",
+        f"  超时数:            {timeouts} ({timeouts/total*100:.1f}%)",
+        "",
+        "【延迟分布】",
+        f"  平均: {avg_lat:.0f}ms  P50: {pct(latencies,50):.0f}ms  P90: {pct(latencies,90):.0f}ms  P99: {pct(latencies,99):.0f}ms  最大: {max(latencies) if latencies else 0:.0f}ms",
+        f"  ≤100ms 占比: {under_100:.1f}%  |  ≤500ms 占比: {under_500:.1f}%",
+        "",
+        "【分场景准确率】",
+    ]
+    for scene, stat in sorted(scene_stats.items()):
+        rate = stat["success"] / stat["total"] * 100
+        lines.append(f"  {scene:<16} {rate:5.1f}%  ({stat['success']}/{stat['total']})")
+
+    lines += ["", "【失败原因分布】"]
+    for reason, count in sorted(fail_reasons.items(), key=lambda x: -x[1]):
+        lines.append(f"  {reason:<24} {count}次")
+
+    lines += ["", "【Bad Cases（前10条）】"]
+    bad_cases = [r for r in results if not r["is_success"]][:10]
+    for i, r in enumerate(bad_cases, 1):
+        debug = (r.get("response_json") or {}).get("debug_info", {})
+        lines.append(f"  {i:2}. 输入: {r['input'][:35]}")
+        lines.append(f"      期望: 起={r['expected_start']} 终={r['expected_end']}")
+        lines.append(f"      实际: 起={debug.get('matched_start_place','未识别')} 终={debug.get('matched_end_place','未识别')}")
+        lines.append(f"      原因: {r['fail_reason']} | 延迟: {r['latency_ms']:.0f}ms")
+        lines.append("")
+
+    lines.append("=" * 62)
+    report_text = "\n".join(lines)
+    print("\n" + report_text)
+
+    os.makedirs(output_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 保存 txt
+    txt_path = os.path.join(output_dir, f"stress_test_report_{ts}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(report_text)
+
+    # 保存 csv
+    csv_path = os.path.join(output_dir, "stress_test_results.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "input", "scene", "expected_start", "expected_end",
+            "has_nav_intent", "latency_ms", "http_status",
+            "is_success", "fail_reason", "match_method_actual"
+        ])
+        writer.writeheader()
+        for r in results:
+            writer.writerow({k: r.get(k, "") for k in writer.fieldnames})
+
+    # 保存 json
+    json_path = os.path.join(output_dir, f"stress_test_report_{ts}.json")
+    summary = {
+        "total": total, "algo_success": algo_success,
+        "accuracy_rate": round(accuracy_rate, 4),
+        "baseline_accuracy_rate": round(baseline_rate/100, 4),
+        "improvement_pct": round(improvement, 2),
+        "avg_latency_ms": round(avg_lat, 2),
+        "p90_latency_ms": round(pct(latencies, 90), 2),
+        "sop_accuracy_pass": accuracy_rate >= 0.85,
+        "sop_latency_pass": avg_lat <= 100,
+        "scene_stats": {k: v for k, v in scene_stats.items()},
+        "fail_reasons": dict(fail_reasons),
+    }
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({"summary": summary, "bad_cases": bad_cases[:50]}, f, ensure_ascii=False, indent=2)
+
+    print(f"\n📄 文本报告: {txt_path}")
+    print(f"📊 CSV详情: {csv_path}")
+    print(f"📦 JSON数据: {json_path}")
+
+    return summary
+
+# ============================================================
+# 8. 入口
+# ============================================================
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", default="http://127.0.0.1:8000/api/chat")
+    parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument("--count", type=int, default=1000)
+    parser.add_argument("--output-dir", default=".")
+    args = parser.parse_args()
+
+    results, test_suite = await run_stress_test(args.url, args.concurrency, args.count)
+    summary = generate_report(results, test_suite, args.output_dir)
+
+    print("\n📈 正在生成图表...")
+    chart_ok = generate_charts(results, test_suite, args.output_dir)
+    if chart_ok:
+        print("\n✅ 所有产出物已生成：")
+        print("   accuracy_chart.png      ← 各级别命中率条形图")
+        print("   confusion_matrix.png    ← 景点识别混淆矩阵")
+        print("   baseline_comparison.png ← 算法 vs 基线对比图")
+        print("   stress_test_results.csv ← 1000条明细数据")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+---
+
+## STEP 3：安装依赖，启动后端，执行压测
+
+在 backend/ 目录依次执行以下命令（不要跳过任何一条）：
+```bash
+pip install aiohttp matplotlib numpy --break-system-packages
+```
+
+然后在 backend/ 目录启动后端（后台运行）：
+```bash
+uvicorn main:app --host 127.0.0.1 --port 8000 &
+sleep 4
+```
+
+等待看到 "Application startup complete" 后，执行压测：
+```bash
+python stress_test.py --concurrency 10 --count 1000 --output-dir .
+```
+
+等待全部完成，将控制台报告完整输出给我。
+
+---
+
+## 重要约束
+
+1. main.py 只改 STEP 1 指定的两处，其他一律不动。
+2. 所有现有算法函数不得修改。
+3. 压测必须跑满 1000 条再输出报告。
+4. 图表必须保存为 PNG 文件，DPI=150。
+5. 如果后端启动失败，停下来报告错误，不要跳过。

@@ -1,0 +1,214 @@
+:root {
+  /* 核心配色方案 */
+  --primary-color: #0F4C75; /* 深海蓝 */
+  --primary-dark: #0A3655;
+  --secondary-color: #3282B8; /* 浅海蓝 */
+  --accent-color: #F0A500; /* 暖黄 */
+  --accent-hover: #D69300;
+  --bg-color: #F9F9F9; /* 米白背景 */
+  --text-main: #1B262C; /* 深灰黑 */
+  --text-secondary: #52616B; /* 灰蓝 */
+  --card-bg: #FFFFFF;
+  
+  /* 阴影系统 */
+  --shadow-sm: 0 2px 4px rgba(15, 76, 117, 0.05);
+  --shadow-md: 0 6px 16px rgba(15, 76, 117, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 76, 117, 0.12);
+  --shadow-float: 0 20px 40px rgba(15, 76, 117, 0.15);
+  
+  /* 动画 */
+  --transition-base: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  overflow-x: hidden; /* 防止横向滚动 */
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.02);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 76, 117, 0.2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 76, 117, 0.4);
+}
+
+/* 科技感背景图案 */
+.tech-bg {
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(50, 130, 184, 0.05) 0%, transparent 20%),
+    radial-gradient(circle at 90% 80%, rgba(240, 165, 0, 0.05) 0%, transparent 20%),
+    linear-gradient(rgba(15, 76, 117, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 76, 117, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+}
+
+/* =========================================
+   Phone Mockup (虚拟手机外壳) - 核心重构
+   ========================================= */
+.hero-phone-container {
+  /* 3D 悬浮效果 */
+  transform: perspective(1000px) rotateY(-5deg) rotateX(2deg);
+  transition: transform 0.5s ease-out;
+  border-radius: 48px; /* 更加圆润 */
+  box-shadow: 
+    -20px 20px 60px rgba(0,0,0,0.15), /* 远阴影 */
+    0 0 0 12px #1a1a1a, /* 物理边框 (黑色) */
+    0 0 0 13px #333,    /* 边框高光 */
+    0 0 0 1px rgba(255,255,255,0.1);
+  overflow: hidden; /* 裁剪内部内容 */
+  background: #000;
+  position: relative;
+  
+  /* 🔥 强制锁定尺寸，防止被内容撑开 */
+  width: 375px !important;
+  height: 812px !important;
+  max-height: 85vh !important; /* 在大屏上也保持比例 */
+  flex-shrink: 0; /* 禁止被 Flex 挤压 */
+}
+
+.hero-phone-container:hover {
+  transform: perspective(1000px) rotateY(0deg) rotateX(0deg) scale(1.02);
+  box-shadow: -30px 30px 80px rgba(0,0,0,0.2);
+}
+
+/* 灵动岛/刘海区域 */
+.phone-notch {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 30px;
+  background: #000;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.notch-camera {
+  width: 10px;
+  height: 10px;
+  background: #111;
+  border-radius: 50%;
+  box-shadow: inset 0 0 2px rgba(255,255,255,0.2);
+}
+
+.notch-sensor {
+  width: 40px;
+  height: 6px;
+  background: #111;
+  border-radius: 4px;
+}
+
+/* 侧边按钮 (音量/电源) */
+.hero-phone-container::before {
+  content: '';
+  position: absolute;
+  top: 100px;
+  left: -14px;
+  width: 4px;
+  height: 40px;
+  background: #222;
+  border-radius: 2px 0 0 2px;
+}
+.hero-phone-container::after {
+  content: '';
+  position: absolute;
+  top: 150px;
+  left: -14px;
+  width: 4px;
+  height: 40px;
+  background: #222;
+  border-radius: 2px 0 0 2px;
+}
+
+/* 玻璃拟态 Nav */
+.glass-nav {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* 卡片悬浮动画 */
+.feature-card {
+  transition: var(--transition-base);
+  border: 1px solid rgba(0,0,0,0.03);
+}
+.feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: var(--shadow-lg);
+  border-color: rgba(50, 130, 184, 0.2);
+}
+
+/* 按钮样式 */
+.btn-primary {
+  background: var(--primary-color);
+  color: white;
+  transition: var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+.btn-primary::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: 0.5s;
+}
+.btn-primary:hover::after {
+  left: 100%;
+}
+.btn-primary:hover {
+  background: var(--primary-dark);
+  box-shadow: 0 4px 12px rgba(15, 76, 117, 0.3);
+}
+
+.btn-outline {
+  border: 2px solid var(--primary-color);
+  color: var(--primary-color);
+  background: transparent;
+  transition: var(--transition-base);
+}
+.btn-outline:hover {
+  background: rgba(15, 76, 117, 0.05);
+  transform: translateY(-2px);
+}
+
+/* 响应式隐藏：移动端只显示 App */
+@media (max-width: 1024px) {
+  .landing-ui {
+    display: none !important;
+  }
+  .app-container-wrapper {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  .app-root {
+    padding: 0 !important;
+    align-items: flex-start !important;
+    background: #f4f1ea !important;
+  }
+}
