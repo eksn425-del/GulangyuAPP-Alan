@@ -340,7 +340,7 @@ def init_db():
 # ==========================================
 # 👇 SQLAlchemy Setup
 # ==========================================
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 
@@ -362,6 +362,25 @@ class HazardLog(Base):
     y = Column(Float)
     z = Column(Float)
     client_source = Column(String, index=True, default="unknown")
+
+class ABTestSummary(Base):
+    __tablename__ = "ab_test_summaries"
+    id = Column(Integer, primary_key=True, index=True)
+    test_run_id = Column(String, unique=True, index=True)
+    timestamp = Column(DateTime, default=datetime.now, index=True)
+    total_agents = Column(Integer, default=0)
+    group_a_count = Column(Integer, default=0)
+    group_b_count = Column(Integer, default=0)
+    group_a_hazard_triggers = Column(Integer, default=0)
+    group_b_hazard_triggers = Column(Integer, default=0)
+    group_a_hazard_rate = Column(Float, default=0.0)
+    group_b_hazard_rate = Column(Float, default=0.0)
+    group_a_avg_path_length = Column(Float, default=0.0)
+    group_b_avg_path_length = Column(Float, default=0.0)
+    group_a_avg_completion_time = Column(Float, default=0.0)
+    group_b_avg_completion_time = Column(Float, default=0.0)
+    client_source = Column(String, index=True, default="unity")
+    raw_payload = Column(Text, default="{}")
 
 def init_sqlalchemy():
     Base.metadata.create_all(bind=engine)

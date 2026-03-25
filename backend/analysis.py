@@ -3,6 +3,77 @@ import pandas as pd
 import os
 from datetime import datetime
 
+def get_phase4_ab_report():
+    try:
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(backend_dir, "gulangyu.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ab_test_summaries'")
+        has_ab = cursor.fetchone() is not None
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hazard_logs'")
+        has_hazard = cursor.fetchone() is not None
+
+        if not has_ab:
+            conn.close()
+            return {"error": "ab_test_summaries 表不存在", "latest": None, "history": [], "hazard_heatmap_top": []}
+
+        df_ab = pd.read_sql("SELECT * FROM ab_test_summaries ORDER BY timestamp DESC, id DESC", conn)
+        if df_ab.empty:
+            conn.close()
+            return {"latest": None, "history": [], "hazard_heatmap_top": []}
+
+        latest = df_ab.iloc[0].to_dict()
+        group_a_rate = float(latest.get("group_a_hazard_rate", 0.0) or 0.0)
+        group_b_rate = float(latest.get("group_b_hazard_rate", 0.0) or 0.0)
+        group_a_len = float(latest.get("group_a_avg_path_length", 0.0) or 0.0)
+        group_b_len = float(latest.get("group_b_avg_path_length", 0.0) or 0.0)
+        b_hazard_lt_a_70 = group_b_rate < (group_a_rate * 0.7) if group_a_rate > 0 else (group_b_rate <= 0)
+        b_len_gte_a = group_b_len >= group_a_len
+
+        history_cols = [
+            "test_run_id", "timestamp", "total_agents",
+            "group_a_hazard_rate", "group_b_hazard_rate",
+            "group_a_avg_path_length", "group_b_avg_path_length"
+        ]
+        history = df_ab[history_cols].head(20).fillna(0).to_dict(orient="records")
+
+        heatmap_top = []
+        if has_hazard:
+            df_hazard = pd.read_sql("SELECT hazard_type, x, z FROM hazard_logs", conn)
+            if not df_hazard.empty:
+                df_hazard["x_bin"] = df_hazard["x"].round(1)
+                df_hazard["z_bin"] = df_hazard["z"].round(1)
+                grouped = (
+                    df_hazard.groupby(["hazard_type", "x_bin", "z_bin"])
+                    .size()
+                    .reset_index(name="count")
+                    .sort_values("count", ascending=False)
+                    .head(200)
+                )
+                heatmap_top = grouped.to_dict(orient="records")
+
+        conn.close()
+        return {
+            "latest": {
+                "test_run_id": latest.get("test_run_id"),
+                "timestamp": latest.get("timestamp"),
+                "total_agents": int(latest.get("total_agents", 0) or 0),
+                "group_a_hazard_rate": round(group_a_rate, 4),
+                "group_b_hazard_rate": round(group_b_rate, 4),
+                "group_a_avg_path_length": round(group_a_len, 4),
+                "group_b_avg_path_length": round(group_b_len, 4),
+                "b_hazard_rate_lt_a_70pct": bool(b_hazard_lt_a_70),
+                "b_path_length_gte_a": bool(b_len_gte_a),
+                "ready_for_phase4_acceptance": bool(b_hazard_lt_a_70 and b_len_gte_a)
+            },
+            "history": history,
+            "hazard_heatmap_top": heatmap_top
+        }
+    except Exception as e:
+        return {"error": str(e), "latest": None, "history": [], "hazard_heatmap_top": []}
+
 def get_analytics_data():
     """
     获取数据分析结果
@@ -88,3 +159,6 @@ if __name__ == "__main__":
     print(f"\n交互类型统计:")
     for interaction in result.get('interactions', []):
         print(f"  - {interaction.get('interaction_type', '未知')}: {interaction.get('count', 0)} 次")
+    phase4 = get_phase4_ab_report()
+    print("\n🧪 Phase4 A/B:")
+    print(phase4.get("latest"))

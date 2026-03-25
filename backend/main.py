@@ -15,9 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from openai import OpenAI
-from database import get_db_connection, init_db, get_db, init_sqlalchemy, HazardLog
-from analysis import get_analytics_data
+from database import get_db_connection, init_db, get_db, init_sqlalchemy, HazardLog, ABTestSummary
+from analysis import get_analytics_data, get_phase4_ab_report
 from graph_engine import route_engine
 
 # 尝试加载环境变量（如果安装了python-dotenv）
@@ -816,6 +817,15 @@ def get_stats(x_admin_password: str = Header(..., alias="x-admin-password")):
         print(f"统计数据获取出错: {e}")
         raise HTTPException(status_code=500, detail=f"获取统计数据失败: {str(e)}")
 
+@app.get("/api/phase4_report")
+def get_phase4_report(x_admin_password: str = Header(..., alias="x-admin-password")):
+    if x_admin_password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="密码错误，您没有权限查看阶段四报告！")
+    result = get_phase4_ab_report()
+    if "error" in result:
+        return JSONResponse(status_code=500, content=result)
+    return result
+
 # 接口7：安全路径规划接口 (基于多路径算法)
 @app.get("/api/route")
 def get_safest_route(start: str, end: str, user_type: str = "normal", user_bearing: float = None, max_routes: int = 3, strategy: str = "safest"):
@@ -858,6 +868,21 @@ class HazardRecord(BaseModel):
     z: float
     client_source: str = "unity"
 
+class ABGroupMetrics(BaseModel):
+    agent_count: int
+    hazard_trigger_count: int = 0
+    avg_path_length: float = 0.0
+    avg_completion_time: float = 0.0
+
+class ABTestSummaryRequest(BaseModel):
+    test_run_id: str | None = None
+    timestamp: datetime | None = None
+    total_agents: int | None = None
+    group_a: ABGroupMetrics
+    group_b: ABGroupMetrics
+    metadata: dict | None = None
+    client_source: str = "unity"
+
 @app.post("/api/record_hazard")
 def record_hazard(record: HazardRecord, db: Session = Depends(get_db)):
     """
@@ -889,6 +914,140 @@ def record_hazard(record: HazardRecord, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"写入数据库失败: {e}")
         raise HTTPException(status_code=500, detail="Failed to record hazard to SQLite")
+
+@app.post("/api/ab_test_summary")
+def record_ab_test_summary(payload: ABTestSummaryRequest, db: Session = Depends(get_db)):
+    try:
+        group_a_count = max(0, int(payload.group_a.agent_count))
+        group_b_count = max(0, int(payload.group_b.agent_count))
+        total_agents = payload.total_agents if payload.total_agents is not None else (group_a_count + group_b_count)
+        total_agents = max(0, int(total_agents))
+
+        group_a_hazard = max(0, int(payload.group_a.hazard_trigger_count))
+        group_b_hazard = max(0, int(payload.group_b.hazard_trigger_count))
+        group_a_rate = (group_a_hazard / group_a_count) if group_a_count > 0 else 0.0
+        group_b_rate = (group_b_hazard / group_b_count) if group_b_count > 0 else 0.0
+
+        test_run_id = payload.test_run_id or f"ab_{int(time.time() * 1000)}"
+        run_time = payload.timestamp or datetime.now()
+
+        row = ABTestSummary(
+            test_run_id=test_run_id,
+            timestamp=run_time,
+            total_agents=total_agents,
+            group_a_count=group_a_count,
+            group_b_count=group_b_count,
+            group_a_hazard_triggers=group_a_hazard,
+            group_b_hazard_triggers=group_b_hazard,
+            group_a_hazard_rate=group_a_rate,
+            group_b_hazard_rate=group_b_rate,
+            group_a_avg_path_length=float(payload.group_a.avg_path_length),
+            group_b_avg_path_length=float(payload.group_b.avg_path_length),
+            group_a_avg_completion_time=float(payload.group_a.avg_completion_time),
+            group_b_avg_completion_time=float(payload.group_b.avg_completion_time),
+            client_source=payload.client_source,
+            raw_payload=json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+        )
+
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+        b_safer_than_a70 = group_b_rate < (group_a_rate * 0.7) if group_a_count > 0 else (group_b_rate <= 0)
+        b_path_longer_or_equal = float(payload.group_b.avg_path_length) >= float(payload.group_a.avg_path_length)
+        acceptance_ready = b_safer_than_a70 and b_path_longer_or_equal
+
+        return {
+            "status": "success",
+            "id": row.id,
+            "test_run_id": row.test_run_id,
+            "metrics": {
+                "group_a_hazard_rate": round(group_a_rate, 4),
+                "group_b_hazard_rate": round(group_b_rate, 4),
+                "group_a_avg_path_length": float(payload.group_a.avg_path_length),
+                "group_b_avg_path_length": float(payload.group_b.avg_path_length)
+            },
+            "acceptance_check": {
+                "b_hazard_rate_lt_a_70pct": b_safer_than_a70,
+                "b_path_length_gte_a": b_path_longer_or_equal,
+                "ready_for_phase4_acceptance": acceptance_ready
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"A/B汇总写入失败: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record A/B summary")
+
+@app.get("/api/ab_test_summary/latest")
+def get_latest_ab_test_summary(db: Session = Depends(get_db)):
+    row = db.query(ABTestSummary).order_by(ABTestSummary.timestamp.desc(), ABTestSummary.id.desc()).first()
+    if not row:
+        return {"status": "empty", "message": "No A/B summary data yet"}
+    return {
+        "status": "success",
+        "data": {
+            "id": row.id,
+            "test_run_id": row.test_run_id,
+            "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+            "total_agents": row.total_agents,
+            "group_a_count": row.group_a_count,
+            "group_b_count": row.group_b_count,
+            "group_a_hazard_triggers": row.group_a_hazard_triggers,
+            "group_b_hazard_triggers": row.group_b_hazard_triggers,
+            "group_a_hazard_rate": row.group_a_hazard_rate,
+            "group_b_hazard_rate": row.group_b_hazard_rate,
+            "group_a_avg_path_length": row.group_a_avg_path_length,
+            "group_b_avg_path_length": row.group_b_avg_path_length,
+            "group_a_avg_completion_time": row.group_a_avg_completion_time,
+            "group_b_avg_completion_time": row.group_b_avg_completion_time,
+            "client_source": row.client_source
+        }
+    }
+
+@app.get("/api/ab_test_summary/history")
+def get_ab_test_summary_history(limit: int = 20, db: Session = Depends(get_db)):
+    safe_limit = min(200, max(1, limit))
+    rows = db.query(ABTestSummary).order_by(ABTestSummary.timestamp.desc(), ABTestSummary.id.desc()).limit(safe_limit).all()
+    return {
+        "status": "success",
+        "count": len(rows),
+        "items": [
+            {
+                "id": row.id,
+                "test_run_id": row.test_run_id,
+                "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                "total_agents": row.total_agents,
+                "group_a_hazard_rate": row.group_a_hazard_rate,
+                "group_b_hazard_rate": row.group_b_hazard_rate,
+                "group_a_avg_path_length": row.group_a_avg_path_length,
+                "group_b_avg_path_length": row.group_b_avg_path_length
+            } for row in rows
+        ]
+    }
+
+@app.get("/api/hazard_heatmap")
+def get_hazard_heatmap(top_n: int = 200, db: Session = Depends(get_db)):
+    safe_top_n = min(1000, max(1, top_n))
+    rows = (
+        db.query(
+            func.round(HazardLog.x, 1).label("x"),
+            func.round(HazardLog.z, 1).label("z"),
+            HazardLog.hazard_type.label("hazard_type"),
+            func.count(HazardLog.id).label("count")
+        )
+        .group_by(func.round(HazardLog.x, 1), func.round(HazardLog.z, 1), HazardLog.hazard_type)
+        .order_by(func.count(HazardLog.id).desc())
+        .limit(safe_top_n)
+        .all()
+    )
+    return {
+        "status": "success",
+        "count": len(rows),
+        "points": [
+            {"x": float(r.x or 0.0), "z": float(r.z or 0.0), "hazard_type": r.hazard_type or "unknown", "count": int(r.count)}
+            for r in rows
+        ]
+    }
 
 # --- main.py 里的 Pydantic 模型和接口 ---
 
