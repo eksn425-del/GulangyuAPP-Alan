@@ -983,6 +983,8 @@ def get_latest_ab_test_summary(db: Session = Depends(get_db)):
     row = db.query(ABTestSummary).order_by(ABTestSummary.timestamp.desc(), ABTestSummary.id.desc()).first()
     if not row:
         return {"status": "empty", "message": "No A/B summary data yet"}
+    b_safer_than_a70 = row.group_b_hazard_rate < (row.group_a_hazard_rate * 0.7) if row.group_a_count > 0 else (row.group_b_hazard_rate <= 0)
+    b_path_longer_or_equal = row.group_b_avg_path_length >= row.group_a_avg_path_length
     return {
         "status": "success",
         "data": {
@@ -1000,7 +1002,8 @@ def get_latest_ab_test_summary(db: Session = Depends(get_db)):
             "group_b_avg_path_length": row.group_b_avg_path_length,
             "group_a_avg_completion_time": row.group_a_avg_completion_time,
             "group_b_avg_completion_time": row.group_b_avg_completion_time,
-            "client_source": row.client_source
+            "client_source": row.client_source,
+            "ready_for_phase4_acceptance": b_safer_than_a70 and b_path_longer_or_equal
         }
     }
 
@@ -1020,7 +1023,10 @@ def get_ab_test_summary_history(limit: int = 20, db: Session = Depends(get_db)):
                 "group_a_hazard_rate": row.group_a_hazard_rate,
                 "group_b_hazard_rate": row.group_b_hazard_rate,
                 "group_a_avg_path_length": row.group_a_avg_path_length,
-                "group_b_avg_path_length": row.group_b_avg_path_length
+                "group_b_avg_path_length": row.group_b_avg_path_length,
+                "ready_for_phase4_acceptance": (
+                    row.group_b_hazard_rate < (row.group_a_hazard_rate * 0.7) if row.group_a_count > 0 else (row.group_b_hazard_rate <= 0)
+                ) and row.group_b_avg_path_length >= row.group_a_avg_path_length
             } for row in rows
         ]
     }
@@ -1155,23 +1161,6 @@ def delete_building(
     finally:
         conn.close()
         
-# 接口 C：删除建筑 (DELETE)
-@app.delete("/api/buildings/{building_id}")
-def delete_building(building_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
-        conn.commit()
-        
-        if cursor.rowcount == 0:
-             raise HTTPException(status_code=404, detail="没找到这个建筑，可能已经被删了")
-             
-        return {"message": "删除成功"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 # 4. 挂载前端网页 (dist) - 放在所有API之后
 if os.path.exists(dist_path):
     # 挂载 JS/CSS 资源

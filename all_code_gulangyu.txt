@@ -9,7 +9,7 @@
 - 后端：FastAPI + SQLite + SQLAlchemy（数据服务、路网算法、AI编排）
 - AI：通过 OpenAI 兼容接口调用 DashScope 模型（qwen-turbo / qwen-vl-max）
 
-项目包含 Unity 联动能力（/api/record_hazard），用于风险上报与分析闭环。
+项目包含 Unity 联动能力（/api/record_hazard、/api/ab_test_summary、/api/hazard_heatmap），用于风险上报、A/B 实验汇总与分析闭环。
 
 ================================================================================
 2. 目录结构与职责分层
@@ -92,6 +92,7 @@ ${PROJECT_ROOT} (e:\my-gulangyu)
 
 风险上报：
 - POST /api/record_hazard
+- GET  /api/hazard_heatmap
 
 A/B 汇总：
 - POST /api/ab_test_summary
@@ -101,7 +102,7 @@ A/B 汇总：
 后台管理（建筑）：
 - POST   /api/buildings（需 x-admin-password）
 - PUT    /api/buildings/{building_id}（需 x-admin-password）
-- DELETE /api/buildings/{building_id}（代码中存在重复定义，见第8节）
+- DELETE /api/buildings/{building_id}（需 x-admin-password）
 
 ================================================================================
 5. 核心业务逻辑（可追溯主链）
@@ -133,12 +134,22 @@ A/B 汇总：
 2) main.py 写入 SQLAlchemy 表 hazard_logs
 3) analysis.py 提供统计输出（/api/stats 消费）
 
+5.4 A/B 实验汇总链路（Unity -> Backend -> Dashboard）
+1) Unity 的 ABTestController 按 group_A/group_B 生成 Agent，并分别记录路径长度、完成时长、hazard 次数
+2) 实验结束后 POST /api/ab_test_summary，后端写入 ABTestSummary 表
+3) 后端在写入与查询 latest/history 时统一计算验收条件：
+   - B组危险率 < A组危险率的 70%
+   - B组平均路径长度 >= A组平均路径长度
+4) 前端 CuratorDashboardSection 拉取 latest/history，在 Dashboard 中展示当前结果与历史趋势
+5) 当前已验证一轮真实联调结果：A组危险率 1.0，B组危险率 0.0，且 B 组路径长于 A 组
+
 ================================================================================
 6. 前端模块与后端依赖关系
 ================================================================================
 App.jsx：
 - 主页面、管理端、视觉识别入口
 - 调用 /api/buildings、/api/upload/*、/api/vision、管理CRUD接口
+- 内含 CuratorDashboardSection，调用 /api/ab_test_summary/latest 与 /api/ab_test_summary/history 展示 A/B 数据
 
 AiPage.jsx：
 - AI对话入口
@@ -160,10 +171,11 @@ config.js：
 ================================================================================
 8. 当前实现注意事项（避免误判）
 ================================================================================
-1) main.py 中 DELETE /api/buildings/{building_id} 出现重复定义，
-   后定义版本可能覆盖前定义版本，需注意权限行为是否符合预期。
+1) DELETE /api/buildings/{building_id} 当前已整理为单一定义，后续若改权限逻辑只需检查这一处。
 2) init_db 在 main.py 中未自动执行，数据库初始化依赖外部脚本/历史数据。
 3) /api/route 当前是 GET（不是 POST），测试文档需与实现保持一致。
+4) A/B Dashboard 的 latest/history 依赖真实数据库数据；若 Unity 没有成功提交 summary，前端不会显示新结果。
+5) 当前 SQLite 中仍保留历史旧实验数据，分析最新实验时应优先以最新 test_run_id 为准。
 
 ================================================================================
 9. AI 接手修改准则
@@ -173,3 +185,11 @@ config.js：
 3) 改AI话术/识别：只改 backend/main.py 的 /api/chat 相关逻辑。
 4) 改前端接口行为：同时检查 src/config.js、src/App.jsx、src/AiPage.jsx。
 5) 改测试口径：同步更新 evaluate_real_users.py、tst_report.py 与测试手册。
+
+================================================================================
+10. 当前阶段判断（2026-03-26）
+================================================================================
+- Web + Backend 已从“功能开发期”进入“联调完成后的验收验证阶段”。
+- /api/record_hazard、/api/ab_test_summary、/api/ab_test_summary/latest、/api/ab_test_summary/history 已形成完整闭环。
+- CuratorDashboardSection 已接入真实 A/B 数据，不再停留在纯 mock 展示阶段。
+- 当前更适合做的工作是：重复跑实验、整理展示结果、打磨演示与答辩材料，而不是再新增核心大功能。

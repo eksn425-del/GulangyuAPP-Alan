@@ -337,16 +337,15 @@ const AdminPanel = ({ buildings, setBuildings, closeAdmin }) => {
   const [editingId, setEditingId] = useState(buildings[0]?.id);
   const [isNew, setIsNew] = useState(false);
   const [tempData, setTempData] = useState(() => buildings.find(b => b.id === editingId) || getEmptyBuilding());
-  
-  useEffect(() => {
-    if (!isNew) {
-        const b = buildings.find(b => b.id === editingId);
-        if (b) setTempData(b);
-    }
-  }, [editingId, buildings, isNew]);
 
   const handleChange = (field, value) => setTempData(prev => ({ ...prev, [field]: value }));
   const handleCreateNew = () => { setIsNew(true); setTempData(getEmptyBuilding()); };
+  const handleSelectBuilding = (building) => {
+    if (!building) return;
+    setIsNew(false);
+    setEditingId(building.id);
+    setTempData(building);
+  };
 
   const handleDelete = async () => {
     if (isNew) { setIsNew(false); return; }
@@ -355,14 +354,13 @@ const AdminPanel = ({ buildings, setBuildings, closeAdmin }) => {
     try {
         const response = await fetch(`${API_URL}/api/buildings/${editingId}`, {
             method: 'DELETE',
-            headers: API_HEADERS,
-            "x-admin-password": "8888"
+            headers: { ...API_HEADERS, "x-admin-password": "8888" }
         });
         if (response.ok) {
             alert("已删除！");
             const newBuildings = buildings.filter(b => b.id !== editingId);
             setBuildings(newBuildings);
-            if (newBuildings.length > 0) setEditingId(newBuildings[0].id);
+            if (newBuildings.length > 0) handleSelectBuilding(newBuildings[0]);
             else handleCreateNew();
         } else {
             alert("删除失败");
@@ -410,7 +408,11 @@ const AdminPanel = ({ buildings, setBuildings, closeAdmin }) => {
         const refresh = await fetch(`${API_URL}/api/buildings`, { headers: API_HEADERS });
         const newData = await refresh.json();
         setBuildings(newData);
-        if (isNew) { setIsNew(false); setEditingId(tempData.id); }
+        if (isNew) {
+            const savedBuilding = newData.find(b => b.id === tempData.id);
+            if (savedBuilding) handleSelectBuilding(savedBuilding);
+            else { setIsNew(false); setEditingId(tempData.id); }
+        }
       } else { alert("失败"); }
     } catch (_e) { alert("网络错误"); }
   };
@@ -471,7 +473,7 @@ const AdminPanel = ({ buildings, setBuildings, closeAdmin }) => {
             <Plus size={16}/> 新增
           </button>
           {buildings.map(b => (
-            <button key={b.id} onClick={() => { setIsNew(false); setEditingId(b.id); }} 
+            <button key={b.id} onClick={() => handleSelectBuilding(b)} 
                 className={`px-4 py-2 rounded-xl whitespace-nowrap text-sm font-bold shadow-sm transition-all snap-start shrink-0 ${!isNew && editingId === b.id ? 'bg-[var(--minnan-red)] text-white' : 'bg-gray-100 text-gray-600'}`}>
                 {b.name}
             </button>
@@ -1025,80 +1027,196 @@ const InteractionStatsSection = () => {
     );
 };
 
-const CuratorDashboardSection = () => (
-    <section id="curator-section" className="py-24 bg-white landing-ui border-t border-gray-100">
-      <div className="container mx-auto px-6">
-        <div className="mb-16">
-            <div className="inline-block px-4 py-1.5 bg-purple-100 text-purple-700 rounded-full text-sm font-bold tracking-wider uppercase mb-4">Dimension 03: Curator Mode</div>
-            <div className="flex flex-col md:flex-row justify-between items-end gap-6">
-                <div>
-                    <h2 className="text-4xl font-black text-[var(--text-main)] mb-4 leading-tight">策展人模式：<span className="text-purple-600">全域数据实时监控</span></h2>
-                    <p className="text-lg text-[var(--text-secondary)] max-w-2xl leading-relaxed">不仅是导览工具，更是景区管理的智慧大脑。通过 Web 端与移动端的数据互通，管理者可以实时查看热力分布、设备状态及用户反馈，实现基于数据的精细化运营。</p>
+const CuratorDashboardSection = () => {
+    const [latestSummary, setLatestSummary] = useState(null);
+    const [abHistory, setAbHistory] = useState([]);
+    const [isLoadingSummary, setIsLoadingSummary] = useState(true);
+    const [summaryError, setSummaryError] = useState('');
+
+    const fetchAbSummary = async () => {
+        setIsLoadingSummary(true);
+        setSummaryError('');
+
+        try {
+            const [latestResponse, historyResponse] = await Promise.all([
+                fetch(`${API_URL}/api/ab_test_summary/latest`, { headers: { "Content-Type": "application/json", ...API_HEADERS } }),
+                fetch(`${API_URL}/api/ab_test_summary/history?limit=10`, { headers: { "Content-Type": "application/json", ...API_HEADERS } })
+            ]);
+
+            if (!latestResponse.ok || !historyResponse.ok) {
+                throw new Error('A/B 数据接口暂时不可用');
+            }
+
+            const latestJson = await latestResponse.json();
+            const historyJson = await historyResponse.json();
+            const latestData = latestJson?.status === 'success' ? latestJson.data : null;
+            const historyItems = Array.isArray(historyJson?.items) ? [...historyJson.items].reverse() : [];
+
+            setLatestSummary(latestData);
+            setAbHistory(
+                historyItems.map((item, index) => ({
+                    label: item.timestamp
+                        ? new Date(item.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : `Run ${index + 1}`,
+                    groupA: Number(item.group_a_hazard_rate ?? 0),
+                    groupB: Number(item.group_b_hazard_rate ?? 0),
+                    pathA: Number(item.group_a_avg_path_length ?? 0),
+                    pathB: Number(item.group_b_avg_path_length ?? 0),
+                    accepted: Boolean(item.ready_for_phase4_acceptance)
+                }))
+            );
+        } catch (error) {
+            setLatestSummary(null);
+            setAbHistory([]);
+            setSummaryError(error instanceof Error ? error.message : 'A/B 数据加载失败');
+        } finally {
+            setIsLoadingSummary(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchAbSummary();
+    }, []);
+
+    const formatPercent = (value) => `${(Number(value ?? 0) * 100).toFixed(1)}%`;
+    const formatMeters = (value) => `${Number(value ?? 0).toFixed(1)}m`;
+    const formatSeconds = (value) => `${Number(value ?? 0).toFixed(1)}s`;
+    const latestUpdateText = latestSummary?.timestamp
+        ? new Date(latestSummary.timestamp).toLocaleString('zh-CN', { hour12: false })
+        : '--';
+    const phaseAcceptanceReady = latestSummary
+        ? (typeof latestSummary.ready_for_phase4_acceptance === 'boolean'
+            ? latestSummary.ready_for_phase4_acceptance
+            : Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 &&
+              Number(latestSummary.group_b_avg_path_length ?? 0) >= Number(latestSummary.group_a_avg_path_length ?? 0))
+        : false;
+    const chartData = abHistory.length > 0
+        ? abHistory
+        : [{ label: '暂无数据', groupA: 0, groupB: 0, pathA: 0, pathB: 0, accepted: false }];
+
+    return (
+        <section id="curator-section" className="py-24 bg-white landing-ui border-t border-gray-100">
+          <div className="container mx-auto px-6">
+            <div className="mb-16">
+                <div className="inline-block px-4 py-1.5 bg-purple-100 text-purple-700 rounded-full text-sm font-bold tracking-wider uppercase mb-4">Dimension 03: Curator Mode</div>
+                <div className="flex flex-col md:flex-row justify-between items-end gap-6">
+                    <div>
+                        <h2 className="text-4xl font-black text-[var(--text-main)] mb-4 leading-tight">策展人模式：<span className="text-purple-600">全域数据实时监控</span></h2>
+                        <p className="text-lg text-[var(--text-secondary)] max-w-2xl leading-relaxed">不仅是导览工具，更是景区管理的智慧大脑。通过 Web 端与移动端的数据互通，管理者可以实时查看热力分布、设备状态及用户反馈，实现基于数据的精细化运营。</p>
+                    </div>
+                    <button onClick={() => { 
+                        const element = document.getElementById('main-content');
+                        if(element) element.scrollIntoView({ behavior: 'smooth' });
+                        window.dispatchEvent(new CustomEvent('open-admin-panel'));
+                    }} className="px-8 py-4 bg-purple-600 text-white rounded-xl font-bold shadow-lg hover:bg-purple-700 hover:shadow-purple-200 transition-all flex items-center gap-2 group whitespace-nowrap">
+                        <Settings className="group-hover:rotate-90 transition-transform"/> 启动管理终端
+                    </button>
                 </div>
-                <button onClick={() => { 
-                    const element = document.getElementById('main-content');
-                    if(element) element.scrollIntoView({ behavior: 'smooth' });
-                    window.dispatchEvent(new CustomEvent('open-admin-panel'));
-                }} className="px-8 py-4 bg-purple-600 text-white rounded-xl font-bold shadow-lg hover:bg-purple-700 hover:shadow-purple-200 transition-all flex items-center gap-2 group whitespace-nowrap">
-                    <Settings className="group-hover:rotate-90 transition-transform"/> 启动管理终端
-                </button>
             </div>
-        </div>
 
-        <div className="bg-gray-900 rounded-[2.5rem] p-8 md:p-12 shadow-2xl relative overflow-hidden text-white">
-             <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-purple-600 rounded-full blur-[200px] opacity-20 pointer-events-none -mr-40 -mt-40"></div>
-             <div className="relative z-10">
-                <div className="flex flex-wrap justify-between items-center mb-12 border-b border-gray-800 pb-8 gap-4">
-                    <div><h3 className="text-3xl font-bold text-white tracking-tight">Gulangyu Live Dashboard</h3><p className="text-gray-400 text-sm mt-1 font-mono">System Status: All Systems Operational</p></div>
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 px-4 py-2 bg-green-500/10 text-green-400 rounded-full text-xs font-bold border border-green-500/20"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Online Nodes: 42</div>
-                        <div className="text-right"><p className="text-xs text-gray-500 uppercase tracking-wider">Last Update</p><p className="font-mono font-bold">14:32:05 UTC+8</p></div>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
-                        <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Total Visits Today</div>
-                        <div className="text-5xl font-mono font-bold text-white mb-2">12,580</div>
-                        <div className="text-green-400 text-sm font-medium flex items-center gap-1"><TrendingUp size={16} /> 12% vs last week</div>
-                    </div>
-                    <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
-                        <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Active Users</div>
-                        <div className="text-5xl font-mono font-bold text-white mb-2">85</div>
-                        <div className="text-purple-400 text-sm font-medium">Current on-site</div>
-                    </div>
-                    <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
-                        <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Avg. Dwell Time</div>
-                        <div className="text-5xl font-mono font-bold text-white mb-2">45m</div>
-                        <div className="text-blue-400 text-sm font-medium">Top: Hai Tian Tang Gou</div>
-                    </div>
-                </div>
-
-                <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm h-[400px] flex flex-col">
-                     <div className="flex justify-between items-center mb-6">
-                        <h4 className="text-gray-200 font-bold flex items-center gap-2"><Waves size={18} className="text-purple-500"/> Real-time Crowd Density</h4>
-                        <div className="flex gap-2">
-                            {['1H', '24H', '7D'].map(t => (<button key={t} className={`px-3 py-1 rounded-lg text-xs font-bold ${t === '24H' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>{t}</button>))}
+            <div className="bg-gray-900 rounded-[2.5rem] p-8 md:p-12 shadow-2xl relative overflow-hidden text-white">
+                 <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-purple-600 rounded-full blur-[200px] opacity-20 pointer-events-none -mr-40 -mt-40"></div>
+                 <div className="relative z-10">
+                    <div className="flex flex-wrap justify-between items-center mb-12 border-b border-gray-800 pb-8 gap-4">
+                        <div><h3 className="text-3xl font-bold text-white tracking-tight">Gulangyu Live Dashboard</h3><p className="text-gray-400 text-sm mt-1 font-mono">System Status: {summaryError ? 'A/B Feed Degraded' : 'All Systems Operational'}</p></div>
+                        <div className="flex items-center gap-4">
+                            <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold border ${phaseAcceptanceReady ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-amber-500/10 text-amber-300 border-amber-500/20'}`}><span className={`w-2 h-2 rounded-full ${phaseAcceptanceReady ? 'bg-green-500 animate-pulse' : 'bg-amber-400'}`}></span> Phase 4 Acceptance: {phaseAcceptanceReady ? 'Ready' : 'Pending'}</div>
+                            <div className="text-right"><p className="text-xs text-gray-500 uppercase tracking-wider">Last Update</p><p className="font-mono font-bold">{latestUpdateText}</p></div>
+                            <button onClick={fetchAbSummary} className="px-4 py-2 rounded-xl bg-gray-800 text-gray-200 hover:bg-gray-700 transition-colors flex items-center gap-2">
+                                <RefreshCw size={16} className={isLoadingSummary ? 'animate-spin' : ''} /> 刷新 A/B
+                            </button>
                         </div>
-                     </div>
-                     <div className="flex-1 w-full min-h-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={[{ time: '06:00', value: 10 }, { time: '08:00', value: 30 }, { time: '10:00', value: 120 }, { time: '12:00', value: 450 }, { time: '14:00', value: 380 }, { time: '16:00', value: 520 }, { time: '18:00', value: 200 }, { time: '20:00', value: 150 }, { time: '22:00', value: 50 }]}>
-                                <defs><linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#9333ea" stopOpacity={0.8}/><stop offset="95%" stopColor="#9333ea" stopOpacity={0}/></linearGradient></defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
-                                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
-                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
-                                <Tooltip contentStyle={{backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '8px', color: '#fff'}} itemStyle={{color: '#d8b4fe'}}/>
-                                <Area type="monotone" dataKey="value" stroke="#9333ea" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                     </div>
-                </div>
-             </div>
-        </div>
-      </div>
-    </section>
-);
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
+                            <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Group A Hazard Rate</div>
+                            <div className="text-5xl font-mono font-bold text-white mb-2">{latestSummary ? formatPercent(latestSummary.group_a_hazard_rate) : '--'}</div>
+                            <div className="text-rose-300 text-sm font-medium flex items-center gap-1"><AlertTriangle size={16} /> 最短路基线</div>
+                        </div>
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
+                            <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Group B Hazard Rate</div>
+                            <div className="text-5xl font-mono font-bold text-white mb-2">{latestSummary ? formatPercent(latestSummary.group_b_hazard_rate) : '--'}</div>
+                            <div className="text-green-300 text-sm font-medium flex items-center gap-1"><TrendingUp size={16} /> 安全路策略</div>
+                        </div>
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
+                            <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Avg. Path Length</div>
+                            <div className="text-5xl font-mono font-bold text-white mb-2">{latestSummary ? formatMeters(latestSummary.group_b_avg_path_length) : '--'}</div>
+                            <div className="text-blue-300 text-sm font-medium">A: {latestSummary ? formatMeters(latestSummary.group_a_avg_path_length) : '--'} / B: {latestSummary ? formatMeters(latestSummary.group_b_avg_path_length) : '--'}</div>
+                        </div>
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm hover:bg-gray-800/60 transition-colors">
+                            <div className="text-gray-400 text-xs uppercase tracking-wider mb-4 font-bold">Avg. Completion Time</div>
+                            <div className="text-5xl font-mono font-bold text-white mb-2">{latestSummary ? formatSeconds(latestSummary.group_b_avg_completion_time) : '--'}</div>
+                            <div className="text-purple-300 text-sm font-medium">A: {latestSummary ? formatSeconds(latestSummary.group_a_avg_completion_time) : '--'} / B: {latestSummary ? formatSeconds(latestSummary.group_b_avg_completion_time) : '--'}</div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.7fr_1fr] gap-6">
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm h-[420px] flex flex-col">
+                             <div className="flex justify-between items-center mb-6 gap-4">
+                                <h4 className="text-gray-200 font-bold flex items-center gap-2"><BarChart3 size={18} className="text-purple-500"/> A/B 风险率趋势</h4>
+                                <div className="text-sm text-gray-400">{isLoadingSummary ? '正在同步实验结果…' : `最近 ${abHistory.length || 0} 次测试`}</div>
+                             </div>
+                             <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={chartData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                                        <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} tickFormatter={(value) => `${Math.round(value * 100)}%`} />
+                                        <Tooltip formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, name === 'groupA' ? 'A 组风险率' : 'B 组风险率']} contentStyle={{backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '8px', color: '#fff'}} itemStyle={{color: '#d8b4fe'}}/>
+                                        <Legend formatter={(value) => value === 'groupA' ? 'A 组风险率' : 'B 组风险率'} />
+                                        <Line type="monotone" dataKey="groupA" stroke="#fb7185" strokeWidth={3} dot={{r: 3}} activeDot={{r: 5}} />
+                                        <Line type="monotone" dataKey="groupB" stroke="#34d399" strokeWidth={3} dot={{r: 3}} activeDot={{r: 5}} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                             </div>
+                        </div>
+
+                        <div className="bg-gray-800/40 p-8 rounded-3xl border border-gray-700/50 backdrop-blur-sm min-h-[420px] flex flex-col">
+                            <div className="flex items-center justify-between mb-6 gap-4">
+                                <h4 className="text-gray-200 font-bold flex items-center gap-2"><Activity size={18} className="text-purple-400"/> 最新实验判读</h4>
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${phaseAcceptanceReady ? 'bg-green-500/15 text-green-300' : 'bg-amber-500/15 text-amber-300'}`}>{phaseAcceptanceReady ? '可验收' : '待优化'}</span>
+                            </div>
+                            {summaryError ? (
+                                <div className="flex-1 rounded-2xl border border-red-500/20 bg-red-500/10 px-5 py-4 text-red-200 text-sm">{summaryError}</div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="rounded-2xl bg-gray-900/70 border border-gray-700/70 p-5">
+                                        <div className="text-xs uppercase tracking-wider text-gray-500 mb-2">Test Run ID</div>
+                                        <div className="font-mono text-sm text-gray-100 break-all">{latestSummary?.test_run_id || '暂无实验记录'}</div>
+                                    </div>
+                                    <div className="rounded-2xl bg-gray-900/70 border border-gray-700/70 p-5">
+                                        <div className="text-xs uppercase tracking-wider text-gray-500 mb-3">Acceptance Check</div>
+                                        <div className="space-y-3 text-sm">
+                                            <div className="flex items-center justify-between gap-4"><span className="text-gray-300">B 组风险率低于 A 组 70%</span><span className={latestSummary && Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 ? 'text-green-300' : 'text-amber-300'}>{latestSummary && Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 ? '通过' : '未通过'}</span></div>
+                                            <div className="flex items-center justify-between gap-4"><span className="text-gray-300">B 组路径长度不短于 A 组</span><span className={latestSummary && Number(latestSummary.group_b_avg_path_length ?? 0) >= Number(latestSummary.group_a_avg_path_length ?? 0) ? 'text-green-300' : 'text-amber-300'}>{latestSummary && Number(latestSummary.group_b_avg_path_length ?? 0) >= Number(latestSummary.group_a_avg_path_length ?? 0) ? '通过' : '未通过'}</span></div>
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl bg-gray-900/70 border border-gray-700/70 p-5">
+                                        <div className="text-xs uppercase tracking-wider text-gray-500 mb-3">Recent Runs</div>
+                                        <div className="space-y-3 max-h-[170px] overflow-y-auto pr-1">
+                                            {abHistory.length === 0 ? (
+                                                <div className="text-sm text-gray-400">{isLoadingSummary ? '正在加载…' : '后端还没有 A/B 汇总数据'}</div>
+                                            ) : (
+                                                abHistory.slice(-5).reverse().map((item) => (
+                                                    <div key={item.label} className="flex items-center justify-between gap-4 text-sm">
+                                                        <span className="text-gray-300">{item.label}</span>
+                                                        <span className={item.accepted ? 'text-green-300' : 'text-gray-400'}>{item.accepted ? '通过' : '未通过'}</span>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                 </div>
+            </div>
+          </div>
+        </section>
+    );
+};
 
 export default function App() {
   const [screen, setScreen] = useState('home');
