@@ -1,6 +1,6 @@
 ================================================================================
 项目全景与架构指南 - 听见·鼓浪屿 (Web + Backend)
-更新时间：基于当前代码库 e:\my-gulangyu 实际结构
+更新时间：2026-03-26（基于当前代码库 e:\my-gulangyu 实际结构）
 ================================================================================
 
 1. 项目目标与系统边界
@@ -35,6 +35,8 @@ ${PROJECT_ROOT} (e:\my-gulangyu)
 ├── public/                          [Vite公共资源]
 ├── package.json                     [前端依赖与脚本]
 ├── vite.config.js                   [本地代理配置]
+├── gulangyu-main/
+│   └── unity/                       [Unity 独立仓库工作目录（已关联 GitHub）]
 └── all_code_gulangyu.txt            [本文档]
 
 补充说明：
@@ -90,6 +92,11 @@ ${PROJECT_ROOT} (e:\my-gulangyu)
 
 风险上报：
 - POST /api/record_hazard
+
+A/B 汇总：
+- POST /api/ab_test_summary
+- GET  /api/ab_test_summary/latest
+- GET  /api/ab_test_summary/history
 
 后台管理（建筑）：
 - POST   /api/buildings（需 x-admin-password）
