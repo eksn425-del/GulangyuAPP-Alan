@@ -1,0 +1,81 @@
+{
+  "summary": {
+    "total": 30,
+    "algo_success": 29,
+    "accuracy_rate": 0.9667,
+    "baseline_accuracy_rate": 0.5,
+    "improvement_pct": 46.67,
+    "avg_latency_ms": 394.44,
+    "p90_latency_ms": 536.39,
+    "sop_accuracy_pass": true,
+    "sop_latency_pass": false,
+    "scene_stats": {
+      "别名输入": {
+        "total": 3,
+        "success": 3
+      },
+      "缺字跳字": {
+        "total": 5,
+        "success": 4
+      },
+      "标准输入": {
+        "total": 5,
+        "success": 5
+      },
+      "闲聊非导航": {
+        "total": 5,
+        "success": 5
+      },
+      "同音字错误": {
+        "total": 7,
+        "success": 7
+      },
+      "单终点导航": {
+        "total": 5,
+        "success": 5
+      }
+    },
+    "fail_reasons": {
+      "START_MISMATCH": 1
+    }
+  },
+  "bad_cases": [
+    {
+      "input": "许园去仰高",
+      "scene": "缺字跳字",
+      "match_level_expected": "fuzzy",
+      "expected_start": "许家园",
+      "expected_end": "仰高别墅",
+      "has_nav_intent": true,
+      "latency_ms": 86.95,
+      "http_status": 200,
+      "response_json": {
+        "reply": "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。",
+        "debug_info": {
+          "recognized_places": [
+            {
+              "place_name": "仰高别墅",
+              "node_id": "node_xm_glangyu_21",
+              "score": 0.9,
+              "method": "alias",
+              "position": 3
+            }
+          ],
+          "matched_start_place": null,
+          "matched_end_place": "仰高别墅入口",
+          "matched_start_score": null,
+          "matched_end_score": 0.9,
+          "asr_confidence": null,
+          "navigation_intent": true,
+          "strategy": "safest",
+          "latency_ms": 33.45,
+          "test_mode": true,
+          "match_method": "alias"
+        }
+      },
+      "is_success": false,
+      "fail_reason": "START_MISMATCH",
+      "match_method_actual": "alias"
+    }
+  ]
+}

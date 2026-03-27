@@ -1,0 +1,41 @@
+{
+  "summary": {
+    "total": 30,
+    "algo_success": 30,
+    "accuracy_rate": 1.0,
+    "baseline_accuracy_rate": 0.5,
+    "improvement_pct": 50.0,
+    "avg_latency_ms": 430.34,
+    "p90_latency_ms": 662.51,
+    "sop_accuracy_pass": true,
+    "sop_latency_pass": false,
+    "scene_stats": {
+      "别名输入": {
+        "total": 3,
+        "success": 3
+      },
+      "缺字跳字": {
+        "total": 5,
+        "success": 5
+      },
+      "标准输入": {
+        "total": 5,
+        "success": 5
+      },
+      "闲聊非导航": {
+        "total": 5,
+        "success": 5
+      },
+      "同音字错误": {
+        "total": 7,
+        "success": 7
+      },
+      "单终点导航": {
+        "total": 5,
+        "success": 5
+      }
+    },
+    "fail_reasons": {}
+  },
+  "bad_cases": []
+}

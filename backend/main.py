@@ -124,7 +124,7 @@ PLACE_ALIASES = {
     "李传别宅": ["李传别", "李传宅", "理传别宅", "李船别宅", "里传别宅", "理传别", "李船", "里传", "李传"],
     "海天堂构": ["海天团购", "海天堂", "海天构", "海天", "海甜", "海田", "海田烫够"],
     "黄荣远堂": ["黄蓉远塘", "黄荣远", "黄蓉远", "黄榕远", "黄蓉", "皇荣远"],
-    "许家园": ["许佳园", "徐家园", "许家院", "徐佳园", "徐家"],
+    "许家园": ["许佳园", "徐家园", "许家院", "徐佳园", "徐家", "许园"],
     "协和礼拜堂": ["鞋盒礼拜堂", "协和教堂", "礼拜堂", "鞋盒", "协和", "携河"],
     "天主教堂": ["天主堂", "天主教", "甜竹"],
     "仰高别墅": ["羊羔别墅", "洋高别墅", "杨高别墅", "羊羔", "仰高", "杨高"]
@@ -324,8 +324,11 @@ def match_place_index(short_name, user_msg):
 
 
 def infer_start_end_from_semantics(mentioned_nodes, user_msg):
-    if len(mentioned_nodes) < 2:
+    if len(mentioned_nodes) == 0:
         return None, None
+    sorted_nodes = sorted(mentioned_nodes, key=lambda x: x["idx"])
+    if len(sorted_nodes) == 1:
+        return None, sorted_nodes[0]["node"]
     msg = user_msg or ""
     from_markers = ["从", "由", "自", "出发"]
     to_markers = ["到", "去", "前往", "往", "导航到", "带我去"]
@@ -334,7 +337,6 @@ def infer_start_end_from_semantics(mentioned_nodes, user_msg):
     from_pos = min(from_positions) if from_positions else -1
     to_pos = min(to_positions) if to_positions else -1
 
-    sorted_nodes = sorted(mentioned_nodes, key=lambda x: x["idx"])
     start_candidate = None
     end_candidate = None
 
@@ -542,7 +544,7 @@ async def chat_with_ai(request: ChatRequest):
                     })
                 
         route_info_text = ""
-        if navigation_intent and len(mentioned_nodes) >= 2:
+        if navigation_intent and mentioned_nodes:
             # 语义优先：按“从/到/去”语义判定起终点，避免出现顺序误判
             start_node, end_node = infer_start_end_from_semantics(mentioned_nodes, user_msg)
             
@@ -641,11 +643,11 @@ async def chat_with_ai(request: ChatRequest):
         用户想从 {start_node['name']} 到 {end_node['name']}，但系统目前无法计算出这两点之间的有效路线。
         请你向用户致歉，并说明目前可能道路不通，或者建议他们换一个目的地。
             """
-        elif navigation_intent and len(mentioned_nodes) == 1:
+        elif navigation_intent and end_node and not start_node:
             action_guideline = f"""
         【当前任务：确认导航起终点】
-        用户似乎想去某个地方，但系统只识别到了一个地点（{mentioned_nodes[0]['short_name']}）。
-        请你友善地向用户确认：“您是想去 {mentioned_nodes[0]['short_name']} 吗？请问您现在在哪里（或者从哪里出发）呢？”
+        用户想去的终点已经识别为（{end_node['name']}），但系统还不知道用户当前从哪里出发。
+        请你友善地向用户确认：“您是想去 {end_node['name']} 吗？请问您现在在哪里（或者从哪里出发）呢？”
         不要自己瞎编路线！
             """
         elif navigation_intent and len(mentioned_nodes) == 0:
