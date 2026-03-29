@@ -1,195 +1,368 @@
 ================================================================================
-项目全景与架构指南 - 听见·鼓浪屿 (Web + Backend)
-更新时间：2026-03-26（基于当前代码库 e:\my-gulangyu 实际结构）
+项目全景与架构实况 - 听见·鼓浪屿（Web + Backend）
+更新时间：2026-03-29（基于当前代码库 e:\my-gulangyu 实际内容）
 ================================================================================
 
-1. 项目目标与系统边界
-本项目是面向视障与行动不便人群的无障碍导览系统，采用前后端分离架构：
-- 前端：React + Vite（交互界面、语音对话、管理台）
-- 后端：FastAPI + SQLite + SQLAlchemy（数据服务、路网算法、AI编排）
-- AI：通过 OpenAI 兼容接口调用 DashScope 模型（qwen-turbo / qwen-vl-max）
+1. 项目定位
+本仓库是整个“听见·鼓浪屿”APP 的 Web 端与主业务后端，负责真实用户交互、建筑数据管理、AI 导览编排、无障碍路径计算，以及与 Unity 3D 仿真端的数据闭环。
 
-项目包含 Unity 联动能力（/api/record_hazard、/api/ab_test_summary、/api/hazard_heatmap），用于风险上报、A/B 实验汇总与分析闭环。
+当前代码库中的核心职责分为四层：
+- 前端展示层：React + Vite + Tailwind 风格类名
+- 业务接口层：FastAPI
+- 数据层：SQLite + SQLAlchemy + 原始内置数据
+- 算法与AI层：多路径寻路、中文地名容错识别、DashScope 大模型调用
+
+本仓库不是单纯官网，也不是单纯管理后台，而是“用户体验入口 + 导览大脑 + 数据中台”。
 
 ================================================================================
-2. 目录结构与职责分层
+2. 当前目录结构与职责
 ================================================================================
 ${PROJECT_ROOT} (e:\my-gulangyu)
 ├── backend/
-│   ├── main.py                      [FastAPI入口，全部API与AI会话编排]
-│   ├── graph_engine.py              [路网构图与路径计算核心]
-│   ├── database.py                  [SQLite结构、初始化与SQLAlchemy模型]
-│   ├── analysis.py                  [事故日志统计接口支撑]
-│   ├── evaluate_real_users.py       [真实用户文本样本评测]
-│   ├── tst_report.py                [评测兼容入口脚本]
-│   ├── real_user_samples.csv        [真实用户样本CSV模板]
-│   ├── static/                      [图片/音频等静态资源]
-│   ├── gulangyu.db                  [业务数据库]
-│   └── .env                         [密钥与环境变量]
+│   ├── main.py
+│   │   [主后端入口；健康检查、建筑查询、AI 对话、视觉识别、路径规划、
+│   │    风险上报、A/B 汇总、后台 CRUD、前端静态托管]
+│   ├── graph_engine.py
+│   │   [路网图构建、距离计算、转向说明、多路径筛选、安全路径策略]
+│   ├── database.py
+│   │   [建筑数据、节点数据、道路数据、SQLite 初始化、SQLAlchemy 模型]
+│   ├── analysis.py
+│   │   [A/B 报告聚合、风险热力点聚合、访问统计接口支撑]
+│   ├── gulangyu.db
+│   │   [主业务数据库]
+│   ├── static/
+│   │   ├── images/   [建筑图片]
+│   │   └── audio/    [上传音频]
+│   ├── evaluate_real_users.py / tst_report.py
+│   │   [真实样本评测脚本]
+│   ├── test_*.py
+│   │   [接口、匹配、路线等试验脚本]
+│   └── .env
+│       [环境变量配置文件]
 ├── src/
-│   ├── main.jsx                     [前端入口]
-│   ├── App.jsx                      [主应用与管理界面]
-│   ├── AiPage.jsx                   [AI对话页]
-│   ├── config.js                    [前端API配置]
-│   └── assets/                      [前端静态资源]
-├── public/                          [Vite公共资源]
-├── package.json                     [前端依赖与脚本]
-├── vite.config.js                   [本地代理配置]
-├── gulangyu-main/
-│   └── unity/                       [Unity 独立仓库工作目录（已关联 GitHub）]
-└── all_code_gulangyu.txt            [本文档]
+│   ├── main.jsx      [前端入口]
+│   ├── App.jsx       [主应用、首页、建筑列表、详情、扫码、管理员、策展看板]
+│   ├── AiPage.jsx    [语音问路与文本问路页面]
+│   ├── config.js     [前端 API 地址与统一请求头]
+│   └── assets/       [前端静态资源]
+├── package.json      [前端依赖与脚本]
+├── vite.config.js    [本地开发代理]
+└── all_code_gulangyu.txt
+    [本文档]
 
-补充说明：
-- pictures/backend 是镜像目录，不是当前主运行后端，常规开发应以 backend/ 为准。
-
-================================================================================
-3. 入口函数、关键依赖与配置参数
-================================================================================
-3.1 前端入口
-- 入口文件：src/main.jsx
-- 根组件：<App />
-- 开发启动：npm run dev
-- 代理配置：vite.config.js 将 /api 与 /static 转发到 http://127.0.0.1:8000
-
-3.2 后端入口
-- 主入口：backend/main.py
-- 实例化：app = FastAPI()
-- 启动方式：
-  - 开发：uvicorn main:app --reload（在 backend/ 下）
-  - 脚本：python main.py（内置 uvicorn.run）
-
-3.3 后端关键依赖（代码可见）
-- FastAPI / Pydantic / SQLAlchemy
-- OpenAI SDK（作为 DashScope 兼容调用客户端）
-- pypinyin、difflib（中文地名容错识别）
-- networkx（图搜索与多路径）
-- pandas（统计分析）
-
-3.4 关键配置参数
-- DASHSCOPE_API_KEY：从环境变量读取（.env 可配置）
-- 静态目录：/static/images、/static/audio
-- 管理密码：x-admin-password（用于统计与建筑管理接口）
+补充事实：
+- 当前主要运行后端是 e:\my-gulangyu\backend，不是 Unity 项目里的 Backend 备份目录。
+- 前端 build/lint 脚本定义在 package.json 中，当前可见脚本为 dev、build、lint、preview。
 
 ================================================================================
-4. 后端 API 全量视图（当前实现）
+3. 技术栈与运行方式
 ================================================================================
-健康与基础：
+3.1 前端
+- React 19
+- Vite 7
+- lucide-react 图标
+- html5-qrcode 二维码扫描
+- recharts 图表
+
+3.2 后端
+- FastAPI
+- Pydantic
+- SQLAlchemy
+- sqlite3
+- networkx
+- pypinyin
+- pandas
+- OpenAI SDK（用于兼容 DashScope 接口）
+
+3.3 运行入口
+- 前端开发：npm run dev
+- 前端构建：npm run build
+- 前端静态检查：npm run lint
+- 后端启动：
+  - 在 backend/ 下执行 uvicorn main:app --reload
+  - 或 python main.py
+
+3.4 网络与前后端连接
+- src/config.js 当前将 API_URL 指向 http://localhost:8000
+- vite.config.js 当前将 /api 与 /static 代理到 http://127.0.0.1:8000
+- 前端开发模式与直连模式都存在，因此本地地址使用时要注意 localhost 与 127.0.0.1 的混用属于当前实际配置的一部分
+
+================================================================================
+4. 前端当前实际实现
+================================================================================
+4.1 App.jsx 负责的页面与交互
+App.jsx 不是单一页面，而是整个移动端体验壳层，内部使用 screen 状态切换主要页面：
+- home：首页
+- list：建筑名录页
+- detail：建筑详情页
+- ai：AI 问路页
+- showAdmin：管理员面板浮层
+- isBlindMode：关怀模式/视障模式切换
+
+4.2 首页能力
+- 展示项目主视觉与 APP 手机壳模拟界面
+- 支持进入体验模式
+- 支持进入建筑列表
+- 支持打开 AI 问路
+- 支持管理员入口事件
+- 支持扫码入口与地理定位入口
+
+4.3 建筑名录与详情
+- 建筑列表数据来自 /api/buildings
+- 点击建筑进入 DetailPage
+- 详情页展示图片、历史、嗅觉、材质触感、安全提示
+- 页面中保留语音播报入口，适配非视觉导览
+
+4.4 二维码与纸质地图联动
+- ScanOverlay 使用 html5-qrcode 尝试打开摄像头实时扫码
+- 当前已实现图片扫码兜底：摄像头不可用时，可上传二维码截图/图片识别
+- URL 参数 id 可直接将用户落到某个建筑详情页，形成纸质地图二维码 -> Web 建筑详情的跳转链路
+
+4.5 关怀模式与 AI 页
+- 关怀模式下使用 BlindModeHome + AiPage 组合
+- AiPage 支持：
+  - 文本提问
+  - 浏览器语音识别
+  - 浏览器语音合成
+  - 自动滚动聊天区
+  - 读取手机朝向并把 user_bearing 发给后端
+
+4.6 管理员与策展人相关界面
+- AdminPanel 在 App.jsx 内部
+- 支持建筑内容的新建、编辑、删除
+- 通过 x-admin-password 与后端受保护接口联动
+- CuratorDashboardSection 调用 /api/ab_test_summary/latest 与 /api/ab_test_summary/history
+- 当前策展数据区显示最新实验结果、历史实验对比、危险率与路径长度信息
+
+4.7 最近已落地的界面修复
+- 扫码模式增加图片上传识别兜底，缓解摄像头 NotReadableError 场景
+- 建筑名录卡片文字颜色已修复为浅底可见
+- 策展人模式菜单文字已修复为浅底可见
+- 内容管理输入框文字与光标样式已修复，可正常输入和查看
+
+================================================================================
+5. 后端 API 当前全量实现
+================================================================================
+5.1 基础与内容
 - GET  /api/health
 - GET  /api/buildings
 - GET  /api/buildings/{building_id}
+- POST /api/buildings
+- PUT  /api/buildings/{building_id}
+- DELETE /api/buildings/{building_id}
 
-上传与识别：
+5.2 上传与识别
 - POST /api/upload/image
 - POST /api/upload/audio
 - POST /api/chat
 - POST /api/vision
 
-导航与统计：
+5.3 导航与分析
 - GET  /api/route
-  参数：start, end, user_type, user_bearing, max_routes, strategy
-  strategy：safest | shortest
-- GET  /api/stats（需 x-admin-password）
+- GET  /api/stats
+- GET  /api/phase4_report
 
-风险上报：
+5.4 Unity 联动数据闭环
 - POST /api/record_hazard
-- GET  /api/hazard_heatmap
-
-A/B 汇总：
 - POST /api/ab_test_summary
 - GET  /api/ab_test_summary/latest
 - GET  /api/ab_test_summary/history
+- GET  /api/hazard_heatmap
 
-后台管理（建筑）：
-- POST   /api/buildings（需 x-admin-password）
-- PUT    /api/buildings/{building_id}（需 x-admin-password）
-- DELETE /api/buildings/{building_id}（需 x-admin-password）
-
-================================================================================
-5. 核心业务逻辑（可追溯主链）
-================================================================================
-5.1 AI语音导览链路（/api/chat）
-1) 前端 AiPage 发送 message、user_bearing、strategy
-2) main.py 进行地名识别：
-   - 别名匹配 PLACE_ALIASES
-   - 拼音匹配 PLACE_PINYIN / PREFIX
-   - 模糊匹配 fuzzy_substring_details
-3) 识别出起终点后调用 route_engine.get_safest_route()
-4) 将路径步骤注入 system prompt，约束“左转/右转/直行”播报
-5) 调用 qwen-turbo 生成回答
-6) 返回：
-   - reply
-   - debug_info（识别地点、分数、strategy、latency_ms）
-
-5.2 路径规划链路（graph_engine.py）
-1) 从 SQLite 读取 accessibility_nodes 与 roads 构图
-2) 计算边属性：distance（Haversine）、slope、friction
-3) 路由策略：
-   - shortest：仅 distance 权重（A组）
-   - safest：distance + slope + friction（B组）
-4) 使用 shortest_simple_paths 取候选路径并去重
-5) 输出 steps（转向指令、距离、材质、备注）与总里程
-
-5.3 风险数据链路（Unity/Web -> /api/record_hazard）
-1) 客户端上报 hazard_type/obstacle_type + xyz + 时间
-2) main.py 写入 SQLAlchemy 表 hazard_logs
-3) analysis.py 提供统计输出（/api/stats 消费）
-
-5.4 A/B 实验汇总链路（Unity -> Backend -> Dashboard）
-1) Unity 的 ABTestController 按 group_A/group_B 生成 Agent，并分别记录路径长度、完成时长、hazard 次数
-2) 实验结束后 POST /api/ab_test_summary，后端写入 ABTestSummary 表
-3) 后端在写入与查询 latest/history 时统一计算验收条件：
-   - B组危险率 < A组危险率的 70%
-   - B组平均路径长度 >= A组平均路径长度
-4) 前端 CuratorDashboardSection 拉取 latest/history，在 Dashboard 中展示当前结果与历史趋势
-5) 当前已验证一轮真实联调结果：A组危险率 1.0，B组危险率 0.0，且 B 组路径长于 A 组
+5.5 管理权限事实
+- /api/stats、/api/phase4_report、建筑管理 CRUD 需要 x-admin-password
+- 当前密码校验逻辑在 backend/main.py 中统一处理
 
 ================================================================================
-6. 前端模块与后端依赖关系
+6. 数据模型与数据库现状
 ================================================================================
-App.jsx：
-- 主页面、管理端、视觉识别入口
-- 调用 /api/buildings、/api/upload/*、/api/vision、管理CRUD接口
-- 内含 CuratorDashboardSection，调用 /api/ab_test_summary/latest 与 /api/ab_test_summary/history 展示 A/B 数据
+6.1 buildings 表
+当前存储 7 个核心建筑条目，字段包括：
+- id
+- name
+- location
+- area
+- image
+- history
+- smell
+- material
+- safety_note
+- latitude
+- longitude
 
-AiPage.jsx：
-- AI对话入口
-- 调用 /api/chat
-- 支持语音与文本输入
+6.2 accessibility_nodes 表
+当前存储无障碍节点，字段包括：
+- node_id
+- node_type
+- name
+- lat_lng
+- latitude
+- longitude
+- audio_ambient
+- smell
+- image
+- model_path
+- detail
 
-config.js：
-- API_BASE_URL 与统一请求头配置
+当前节点类型包含：
+- 建筑入口
+- 路口
+- 转角
+- 休息点
+
+6.3 roads 表
+当前存储道路边信息，字段包括：
+- edge_id
+- start_node
+- end_node
+- material
+- width_m
+- slope_deg
+- friction
+- note
+- image
+
+6.4 SQLAlchemy 附加表
+- hazard_logs：记录风险触发坐标、类型、来源
+- ab_test_summaries：记录 A/B 实验汇总数据
 
 ================================================================================
-7. 测试与评估脚本（当前可用）
+7. 路径算法当前实现
 ================================================================================
-- python backend/evaluate_real_users.py --csv backend/real_user_samples.csv --score-threshold 0.85
-- python backend/tst_report.py --csv backend/real_user_samples.csv --score-threshold 0.85
+7.1 原始数据来源
+- database.py 中内置 buildings_data、nodes_data、roads_data
+- init_db() 会创建表并清空后重新写入这些内置数据
 
-评测脚本输出：
-- 样本总数、通过数、准确率、平均耗时、Bad Cases 列表
+7.2 图构建方式
+- graph_engine.py 从 SQLite 读取节点与道路
+- 使用 NetworkX Graph 建图
+- 节点属性含名称、经纬度、类型、detail
+- 边属性含 distance、slope、friction、material、note
+
+7.3 距离与方向计算
+- 距离：Haversine 公式
+- 绝对方向：calculate_bearing()
+- 相对转向：
+  - get_relative_turn()
+  - get_turn_instruction()
+
+7.4 权重模型
+calculate_edge_weight(distance, slope, friction, user_type)
+根据用户类型差异化设置权重参数：
+- normal
+- elderly
+- disabled
+- blind
+
+其中权重由三部分组成：
+- 距离成本
+- 坡度成本
+- 摩擦/防滑成本
+
+7.5 多路径生成
+- 使用 shortest_simple_paths 生成候选路径
+- 通过边重叠率筛掉过于相似的路线
+- strategy 支持：
+  - safest：按综合安全权重
+  - shortest：按纯距离
+
+7.6 建筑入口接边逻辑
+- 所有“建筑入口”节点会动态连接到最接近的道路边两端
+- 这样建筑入口与普通路口可以形成可达路径
 
 ================================================================================
-8. 当前实现注意事项（避免误判）
+8. AI 对话与意图识别当前实现
 ================================================================================
-1) DELETE /api/buildings/{building_id} 当前已整理为单一定义，后续若改权限逻辑只需检查这一处。
-2) init_db 在 main.py 中未自动执行，数据库初始化依赖外部脚本/历史数据。
-3) /api/route 当前是 GET（不是 POST），测试文档需与实现保持一致。
-4) A/B Dashboard 的 latest/history 依赖真实数据库数据；若 Unity 没有成功提交 summary，前端不会显示新结果。
-5) 当前 SQLite 中仍保留历史旧实验数据，分析最新实验时应优先以最新 test_run_id 为准。
+8.1 模型调用
+- 文本对话：qwen-turbo
+- 图像理解：qwen-vl-max
+
+8.2 /api/chat 的处理流程
+1) 接收 message、user_bearing、asr_confidence、strategy、test_mode
+2) 读取实时建筑与节点数据
+3) 识别是否存在导航意图
+4) 对建筑名进行中文别名、拼音、模糊匹配
+5) 推断起点与终点
+6) 调用 route_engine.get_safest_route()
+7) 将路线结果写入系统提示词
+8) 调用大模型输出面向视障用户的话术
+
+8.3 地名容错识别机制
+当前后端并不是简单字符串相等匹配，而是混合使用：
+- PLACE_ALIASES：手工别名表
+- PLACE_PINYIN：标准拼音
+- PLACE_PINYIN_PREFIX：拼音前缀
+- fuzzy_substring_match / fuzzy_substring_details：模糊窗口匹配
+- adaptive_match_threshold：按短词与 ASR 置信度调整阈值
+
+8.4 导航回答约束
+- 路线播报禁止使用东南西北
+- 优先使用左转、右转、直行等相对方向
+- 当系统已确定起终点时，会把纠错结果强行写入 prompt，减少模型“没听清”的回答
 
 ================================================================================
-9. AI 接手修改准则
+9. 分析与实验数据闭环
 ================================================================================
-1) 改路网数据：优先修改 backend/database.py 的节点与道路数据，再重建数据库。
-2) 改寻路算法：只改 backend/graph_engine.py，并回归 /api/route。
-3) 改AI话术/识别：只改 backend/main.py 的 /api/chat 相关逻辑。
-4) 改前端接口行为：同时检查 src/config.js、src/App.jsx、src/AiPage.jsx。
-5) 改测试口径：同步更新 evaluate_real_users.py、tst_report.py 与测试手册。
+9.1 风险日志闭环
+- Unity 或其他客户端调用 /api/record_hazard
+- 后端写入 hazard_logs
+- /api/hazard_heatmap 输出风险聚合点
+
+9.2 A/B 汇总闭环
+- Unity 提交 group_a / group_b 实验指标到 /api/ab_test_summary
+- 后端写入 ab_test_summaries
+- latest/history 提供最新与历史实验结果
+- CuratorDashboardSection 直接消费这些真实数据
+
+9.3 阶段四报告聚合
+- analysis.py 的 get_phase4_ab_report()
+- 输出 latest、history、hazard_heatmap_top
+- /api/phase4_report 暴露该结果
 
 ================================================================================
-10. 当前阶段判断（2026-03-26）
+10. 已实现的实际业务能力
 ================================================================================
-- Web + Backend 已从“功能开发期”进入“联调完成后的验收验证阶段”。
-- /api/record_hazard、/api/ab_test_summary、/api/ab_test_summary/latest、/api/ab_test_summary/history 已形成完整闭环。
-- CuratorDashboardSection 已接入真实 A/B 数据，不再停留在纯 mock 展示阶段。
-- 当前更适合做的工作是：重复跑实验、整理展示结果、打磨演示与答辩材料，而不是再新增核心大功能。
+当前代码库已经实现并可从代码直接确认的能力包括：
+- 7 个历史建筑的内容浏览与详情展示
+- 建筑信息后台管理 CRUD
+- 手机地理定位辅助提示
+- 二维码/纸质地图联动跳转
+- 摄像头扫码与图片扫码双通道
+- 视障友好语音问路
+- 浏览器 STT/TTS
+- 结合用户朝向的相对方向导航
+- 基于坡度与摩擦的安全寻路
+- 视觉识别辅助描述
+- Unity 风险上报入库
+- Unity A/B 实验结果入库
+- 策展看板展示最新实验结果与历史结果
+
+================================================================================
+11. 当前代码状态的关键事实
+================================================================================
+- 前端 App 体验入口、后台、看板、AI 对话都集中在 src/App.jsx 与 src/AiPage.jsx
+- 后端 main.py 已经承担了较多职责，属于单文件集中编排结构
+- 路网与建筑原始数据目前仍以内置 Python 数据结构为主，再写入 SQLite
+- 路线接口当前使用 GET，不是 POST
+- 数据库初始化函数 init_db() 在 main.py 启动时没有自动执行
+- 分析接口 /api/stats 依赖 user_visits 表；若表不存在会返回错误结构
+- Unity 联动相关接口已经在主后端中实现，不依赖 Unity 本地 Backend 才能工作
+- 当前仓库包含真实静态资源、真实测试脚本、真实数据库文件，不是空壳 Demo
+
+================================================================================
+12. 与 Unity 项目的关系
+================================================================================
+本仓库与 e:\Gulangyu_3D 的关系是：
+- 本仓库负责真实业务接口、AI、数据库、路径算法
+- Unity 仓库负责 3D 数字孪生仿真、盲杖探测、危险触发、A/B 实验代理
+- Unity 的 A/B 与 hazard 数据回流到本仓库
+- 本仓库的 /api/route 又反向为 Unity 的 B 组 safest 导航提供路线
+
+因此二者不是“谁附属谁”的关系，而是：
+- Web/Backend 是业务中台与用户交互中枢
+- Unity 是 3D 仿真与实验验证终端
+
+================================================================================
+13. 当前文档用途
+================================================================================
+本文档用于让不了解仓库上下文的 AI 或开发者，在不连接 GitHub 历史的情况下，直接理解 e:\my-gulangyu 当前实际代码结构、算法实现、接口边界、UI 能力、数据闭环与 Unity 联动关系。
