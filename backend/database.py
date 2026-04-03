@@ -225,6 +225,10 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def _table_has_rows(cursor, table_name):
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+    return cursor.fetchone()[0] > 0
+
 def init_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -283,59 +287,71 @@ def init_db():
     )
     ''')
 
-    # 2. 插入数据 (先清空旧数据)
-    cursor.execute("DELETE FROM buildings")
-    cursor.execute("DELETE FROM accessibility_nodes")
-    cursor.execute("DELETE FROM roads")
-    
-    # 2.1 插入建筑数据
-    for b in buildings_data:
-        cursor.execute('''
-        INSERT INTO buildings (id, name, location, area, image, history, smell, material, safety_note, latitude, longitude)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            b['id'], b['name'], b.get('location', ''), b.get('area', ''), b['image'], 
-            b['history'], b['smell'], b['material'], b['safety_note'], 
-            b['latitude'], b['longitude']
-        ))
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        building_id TEXT,
+        interaction_type TEXT,
+        timestamp DATETIME,
+        FOREIGN KEY(building_id) REFERENCES buildings(id)
+    )
+    ''')
 
-    # 2.2 插入节点数据
-    for n in nodes_data:
-        # 解析经纬度
-        try:
-            lng_str, lat_str = n['lat_lng'].split(',')
-            lng = float(lng_str.strip())
-            lat = float(lat_str.strip())
-        except:
-            lng, lat = 0.0, 0.0
-            
-        # 构建图片路径
-        image_path = f"/static/pictures/{n['img_ref']}.jpg"
-        
-        cursor.execute('''
-        INSERT INTO accessibility_nodes (node_id, node_type, name, lat_lng, latitude, longitude, audio_ambient, smell, image, model_path, detail)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            n['node_id'], n['node_type'], n['name'], n['lat_lng'], lat, lng, 
-            n['audio_ambient'], n['smell'], image_path, n['model_path'], n.get('detail', '')
-        ))
+    # 2. 仅在空表时灌入基础数据，避免覆盖内容管理端已修改的数据
+    if not _table_has_rows(cursor, "buildings"):
+        for b in buildings_data:
+            cursor.execute('''
+            INSERT INTO buildings (id, name, location, area, image, history, smell, material, safety_note, latitude, longitude)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                b['id'], b['name'], b.get('location', ''), b.get('area', ''), b['image'],
+                b['history'], b['smell'], b['material'], b['safety_note'],
+                b['latitude'], b['longitude']
+            ))
+        print("✅ 已写入基础 buildings 数据")
+    else:
+        print("ℹ️ buildings 表已有数据，跳过基础灌库")
 
-    # 2.3 插入路径数据
-    for r in roads_data:
-        # 构建图片路径 (支持多张图片)
-        image_paths = ";".join([f"/static/pictures/{ref}.jpg" for ref in r['img_refs']])
-        
-        cursor.execute('''
-        INSERT INTO roads (edge_id, start_node, end_node, material, width_m, slope_deg, friction, note, image)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            r['edge_id'], r['start_node'], r['end_node'], r['material'], 
-            r['width_m'], r['slope_deg'], r['friction'], r['note'], image_paths
-        ))
+    if not _table_has_rows(cursor, "accessibility_nodes"):
+        for n in nodes_data:
+            try:
+                lng_str, lat_str = n['lat_lng'].split(',')
+                lng = float(lng_str.strip())
+                lat = float(lat_str.strip())
+            except Exception:
+                lng, lat = 0.0, 0.0
+
+            image_path = f"/static/pictures/{n['img_ref']}.jpg"
+
+            cursor.execute('''
+            INSERT INTO accessibility_nodes (node_id, node_type, name, lat_lng, latitude, longitude, audio_ambient, smell, image, model_path, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                n['node_id'], n['node_type'], n['name'], n['lat_lng'], lat, lng,
+                n['audio_ambient'], n['smell'], image_path, n['model_path'], n.get('detail', '')
+            ))
+        print("✅ 已写入基础 accessibility_nodes 数据")
+    else:
+        print("ℹ️ accessibility_nodes 表已有数据，跳过基础灌库")
+
+    if not _table_has_rows(cursor, "roads"):
+        for r in roads_data:
+            image_paths = ";".join([f"/static/pictures/{ref}.jpg" for ref in r['img_refs']])
+
+            cursor.execute('''
+            INSERT INTO roads (edge_id, start_node, end_node, material, width_m, slope_deg, friction, note, image)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                r['edge_id'], r['start_node'], r['end_node'], r['material'],
+                r['width_m'], r['slope_deg'], r['friction'], r['note'], image_paths
+            ))
+        print("✅ 已写入基础 roads 数据")
+    else:
+        print("ℹ️ roads 表已有数据，跳过基础灌库")
     
     conn.commit()
     conn.close()
-    print(f"✅ 数据库初始化成功！文件位置: {db_path}")
+    print(f"✅ 数据库检查完成！文件位置: {db_path}")
 
 # ==========================================
 # 👇 SQLAlchemy Setup

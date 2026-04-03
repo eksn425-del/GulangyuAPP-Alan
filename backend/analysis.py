@@ -3,6 +3,14 @@ import pandas as pd
 import os
 from datetime import datetime
 
+
+def _compute_hazard_agent_ratio(hazard_count, agent_count):
+    safe_count = max(0, int(agent_count or 0))
+    safe_hazard_count = max(0, int(hazard_count or 0))
+    if safe_count <= 0:
+        return 0.0
+    return min(safe_hazard_count, safe_count) / safe_count
+
 def get_phase4_ab_report():
     try:
         backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -25,8 +33,8 @@ def get_phase4_ab_report():
             return {"latest": None, "history": [], "hazard_heatmap_top": []}
 
         latest = df_ab.iloc[0].to_dict()
-        group_a_rate = float(latest.get("group_a_hazard_rate", 0.0) or 0.0)
-        group_b_rate = float(latest.get("group_b_hazard_rate", 0.0) or 0.0)
+        group_a_rate = _compute_hazard_agent_ratio(latest.get("group_a_hazard_triggers", 0), latest.get("group_a_count", 0))
+        group_b_rate = _compute_hazard_agent_ratio(latest.get("group_b_hazard_triggers", 0), latest.get("group_b_count", 0))
         group_a_len = float(latest.get("group_a_avg_path_length", 0.0) or 0.0)
         group_b_len = float(latest.get("group_b_avg_path_length", 0.0) or 0.0)
         b_hazard_lt_a_70 = group_b_rate < (group_a_rate * 0.7) if group_a_rate > 0 else (group_b_rate <= 0)
@@ -34,10 +42,14 @@ def get_phase4_ab_report():
 
         history_cols = [
             "test_run_id", "timestamp", "total_agents",
-            "group_a_hazard_rate", "group_b_hazard_rate",
+            "group_a_count", "group_b_count",
+            "group_a_hazard_triggers", "group_b_hazard_triggers",
             "group_a_avg_path_length", "group_b_avg_path_length"
         ]
-        history = df_ab[history_cols].head(20).fillna(0).to_dict(orient="records")
+        history_df = df_ab[history_cols].head(20).fillna(0).copy()
+        history_df["group_a_hazard_rate"] = history_df.apply(lambda row: _compute_hazard_agent_ratio(row["group_a_hazard_triggers"], row["group_a_count"]), axis=1)
+        history_df["group_b_hazard_rate"] = history_df.apply(lambda row: _compute_hazard_agent_ratio(row["group_b_hazard_triggers"], row["group_b_count"]), axis=1)
+        history = history_df.to_dict(orient="records")
 
         heatmap_top = []
         if has_hazard:
@@ -91,17 +103,17 @@ def get_analytics_data():
         db_path = os.path.join(backend_dir, "gulangyu.db")
         conn = sqlite3.connect(db_path)
         
-        # 2. 检查 user_visits 表是否存在
+        # 2. 确保 user_visits 表存在，避免统计接口因冷启动直接报错
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_visits'")
-        if not cursor.fetchone():
-            conn.close()
-            return {
-                "error": "user_visits 表不存在，请先运行数据生成脚本",
-                "total_visits": 0,
-                "top_buildings": [],
-                "interactions": []
-            }
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_visits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            building_id TEXT,
+            interaction_type TEXT,
+            timestamp DATETIME
+        )
+        ''')
+        conn.commit()
         
         # 3. 读取数据
         df_logs = pd.read_sql("SELECT * FROM user_visits", conn)

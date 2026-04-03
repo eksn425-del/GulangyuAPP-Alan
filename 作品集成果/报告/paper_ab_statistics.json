@@ -1,0 +1,62 @@
+{
+  "sample_rule": {
+    "client_source": "unity",
+    "group_a_count_min": 10,
+    "group_b_count_min": 10,
+    "hazard_rate_range": [
+      0,
+      1
+    ]
+  },
+  "selected_ids": [
+    8,
+    9,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "selected_test_run_ids": [
+    "ab_unity_20260403_093525771",
+    "ab_unity_20260403_102824247",
+    "ab_unity_20260403_105044183",
+    "ab_unity_20260403_105640399",
+    "ab_unity_20260403_110114951",
+    "ab_unity_20260403_110748865",
+    "ab_unity_20260403_111138963"
+  ],
+  "run_count": 7,
+  "metrics": {
+    "hazard_ratio": {
+      "group_a_mean": 0.9571428571428572,
+      "group_a_sd": 0.11338934190276817,
+      "group_b_mean": 0.0,
+      "group_b_sd": 0.0,
+      "mean_difference": 0.9571428571428572,
+      "wilcoxon_statistic": 28.0,
+      "p_value": 0.0078125,
+      "cohen_dz": 8.441206563872742
+    },
+    "path_length": {
+      "group_a_mean": 310.16190447126115,
+      "group_a_sd": 3.3564334403720637,
+      "group_b_mean": 386.74481201171875,
+      "group_b_sd": 9.464106919958285,
+      "mean_difference": 76.58290754045758,
+      "t_statistic": 31.956312355091097,
+      "p_value": 6.241440575888433e-08,
+      "cohen_dz": 12.078350758610263
+    },
+    "completion_time": {
+      "group_a_mean": 97.47500501360211,
+      "group_a_sd": 2.443614515879622,
+      "group_b_mean": 139.64111110142298,
+      "group_b_sd": 5.133502121624677,
+      "mean_difference": 42.16610608782087,
+      "t_statistic": 21.572332835436196,
+      "p_value": 6.476111022622456e-07,
+      "cohen_dz": 8.15357541172529
+    }
+  }
+}

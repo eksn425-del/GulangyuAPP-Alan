@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 init_sqlalchemy()
+init_db()
 
 # 1. 解决跨域问题 (CORS) - 允许所有来源
 app.add_middleware(
@@ -885,6 +886,40 @@ class ABTestSummaryRequest(BaseModel):
     metadata: dict | None = None
     client_source: str = "unity"
 
+
+def _compute_hazard_agent_ratio(hazard_count: int, agent_count: int) -> float:
+    safe_count = max(0, int(agent_count))
+    safe_hazard_count = max(0, int(hazard_count))
+    if safe_count <= 0:
+        return 0.0
+    return min(safe_hazard_count, safe_count) / safe_count
+
+
+def _serialize_ab_summary_row(row: ABTestSummary) -> dict:
+    group_a_ratio = _compute_hazard_agent_ratio(row.group_a_hazard_triggers, row.group_a_count)
+    group_b_ratio = _compute_hazard_agent_ratio(row.group_b_hazard_triggers, row.group_b_count)
+    b_safer_than_a70 = group_b_ratio < (group_a_ratio * 0.7) if row.group_a_count > 0 else (group_b_ratio <= 0)
+    b_path_longer_or_equal = row.group_b_avg_path_length >= row.group_a_avg_path_length
+
+    return {
+        "id": row.id,
+        "test_run_id": row.test_run_id,
+        "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+        "total_agents": row.total_agents,
+        "group_a_count": row.group_a_count,
+        "group_b_count": row.group_b_count,
+        "group_a_hazard_triggers": row.group_a_hazard_triggers,
+        "group_b_hazard_triggers": row.group_b_hazard_triggers,
+        "group_a_hazard_rate": round(group_a_ratio, 4),
+        "group_b_hazard_rate": round(group_b_ratio, 4),
+        "group_a_avg_path_length": row.group_a_avg_path_length,
+        "group_b_avg_path_length": row.group_b_avg_path_length,
+        "group_a_avg_completion_time": row.group_a_avg_completion_time,
+        "group_b_avg_completion_time": row.group_b_avg_completion_time,
+        "client_source": row.client_source,
+        "ready_for_phase4_acceptance": b_safer_than_a70 and b_path_longer_or_equal
+    }
+
 @app.post("/api/record_hazard")
 def record_hazard(record: HazardRecord, db: Session = Depends(get_db)):
     """
@@ -927,8 +962,8 @@ def record_ab_test_summary(payload: ABTestSummaryRequest, db: Session = Depends(
 
         group_a_hazard = max(0, int(payload.group_a.hazard_trigger_count))
         group_b_hazard = max(0, int(payload.group_b.hazard_trigger_count))
-        group_a_rate = (group_a_hazard / group_a_count) if group_a_count > 0 else 0.0
-        group_b_rate = (group_b_hazard / group_b_count) if group_b_count > 0 else 0.0
+        group_a_rate = _compute_hazard_agent_ratio(group_a_hazard, group_a_count)
+        group_b_rate = _compute_hazard_agent_ratio(group_b_hazard, group_b_count)
 
         test_run_id = payload.test_run_id or f"ab_{int(time.time() * 1000)}"
         run_time = payload.timestamp or datetime.now()
@@ -985,28 +1020,9 @@ def get_latest_ab_test_summary(db: Session = Depends(get_db)):
     row = db.query(ABTestSummary).order_by(ABTestSummary.timestamp.desc(), ABTestSummary.id.desc()).first()
     if not row:
         return {"status": "empty", "message": "No A/B summary data yet"}
-    b_safer_than_a70 = row.group_b_hazard_rate < (row.group_a_hazard_rate * 0.7) if row.group_a_count > 0 else (row.group_b_hazard_rate <= 0)
-    b_path_longer_or_equal = row.group_b_avg_path_length >= row.group_a_avg_path_length
     return {
         "status": "success",
-        "data": {
-            "id": row.id,
-            "test_run_id": row.test_run_id,
-            "timestamp": row.timestamp.isoformat() if row.timestamp else None,
-            "total_agents": row.total_agents,
-            "group_a_count": row.group_a_count,
-            "group_b_count": row.group_b_count,
-            "group_a_hazard_triggers": row.group_a_hazard_triggers,
-            "group_b_hazard_triggers": row.group_b_hazard_triggers,
-            "group_a_hazard_rate": row.group_a_hazard_rate,
-            "group_b_hazard_rate": row.group_b_hazard_rate,
-            "group_a_avg_path_length": row.group_a_avg_path_length,
-            "group_b_avg_path_length": row.group_b_avg_path_length,
-            "group_a_avg_completion_time": row.group_a_avg_completion_time,
-            "group_b_avg_completion_time": row.group_b_avg_completion_time,
-            "client_source": row.client_source,
-            "ready_for_phase4_acceptance": b_safer_than_a70 and b_path_longer_or_equal
-        }
+        "data": _serialize_ab_summary_row(row)
     }
 
 @app.get("/api/ab_test_summary/history")
@@ -1016,21 +1032,7 @@ def get_ab_test_summary_history(limit: int = 20, db: Session = Depends(get_db)):
     return {
         "status": "success",
         "count": len(rows),
-        "items": [
-            {
-                "id": row.id,
-                "test_run_id": row.test_run_id,
-                "timestamp": row.timestamp.isoformat() if row.timestamp else None,
-                "total_agents": row.total_agents,
-                "group_a_hazard_rate": row.group_a_hazard_rate,
-                "group_b_hazard_rate": row.group_b_hazard_rate,
-                "group_a_avg_path_length": row.group_a_avg_path_length,
-                "group_b_avg_path_length": row.group_b_avg_path_length,
-                "ready_for_phase4_acceptance": (
-                    row.group_b_hazard_rate < (row.group_a_hazard_rate * 0.7) if row.group_a_count > 0 else (row.group_b_hazard_rate <= 0)
-                ) and row.group_b_avg_path_length >= row.group_a_avg_path_length
-            } for row in rows
-        ]
+        "items": [_serialize_ab_summary_row(row) for row in rows]
     }
 
 @app.get("/api/hazard_heatmap")

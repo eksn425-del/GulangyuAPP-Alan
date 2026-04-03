@@ -369,15 +369,25 @@ const AccessibilityToggle = ({ className }) => {
 const ScanOverlay = ({ onClose, onScanSuccess }) => {
   const scannerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const readerIdRef = useRef(`reader-${Math.random().toString(36).slice(2)}`);
+  const onCloseRef = useRef(onClose);
+  const onScanSuccessRef = useRef(onScanSuccess);
+  const hasHandledResultRef = useRef(false);
   const [scanStatus, setScanStatus] = useState('正在启动摄像头...');
   const [scanError, setScanError] = useState('');
 
   useEffect(() => {
+    onCloseRef.current = onClose;
+    onScanSuccessRef.current = onScanSuccess;
+  }, [onClose, onScanSuccess]);
+
+  useEffect(() => {
     let isMounted = true;
-    const scanner = new Html5Qrcode("reader");
-    scannerRef.current = scanner;
 
     const stopScanner = async () => {
+      const scanner = scannerRef.current;
+      if (!scanner) return;
+
       try {
         await scanner.stop();
       } catch (_e) {
@@ -388,9 +398,17 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
       } catch (_e) {
         void _e;
       }
+
+      scannerRef.current = null;
+      const readerElement = document.getElementById(readerIdRef.current);
+      if (readerElement) {
+        readerElement.innerHTML = '';
+      }
     };
 
     const handleDecodedText = async (decodedText) => {
+      if (hasHandledResultRef.current) return;
+      hasHandledResultRef.current = true;
       await stopScanner();
       const normalizedText = String(decodedText || '').trim();
 
@@ -398,7 +416,7 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
         const url = new URL(normalizedText);
         const id = url.searchParams.get("id");
         if (id) {
-          onScanSuccess(id);
+          onScanSuccessRef.current(id);
           return;
         }
       } catch (_e) {
@@ -406,17 +424,23 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
       }
 
       if (normalizedText) {
-        onScanSuccess(normalizedText);
+        onScanSuccessRef.current(normalizedText);
         return;
       }
 
       alert("无效的建筑二维码");
-      onClose();
+      onCloseRef.current();
     };
 
     const startScanner = async () => {
       try {
+        const scanner = new Html5Qrcode(readerIdRef.current);
+        scannerRef.current = scanner;
         const cameras = await Html5Qrcode.getCameras();
+        if (!isMounted) {
+          await stopScanner();
+          return;
+        }
         if (!cameras.length) {
           throw new Error("未检测到可用摄像头");
         }
@@ -436,6 +460,11 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
           () => {}
         );
 
+        if (!isMounted) {
+          await stopScanner();
+          return;
+        }
+
         if (isMounted) {
           setScanStatus('请将二维码放入取景框内');
           setScanError('');
@@ -454,13 +483,13 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
       isMounted = false;
       stopScanner();
     };
-  }, [onClose, onScanSuccess]);
+  }, []);
 
   const handleImageScan = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const scanner = scannerRef.current || new Html5Qrcode("reader");
+    const scanner = scannerRef.current || new Html5Qrcode(readerIdRef.current);
     scannerRef.current = scanner;
 
     try {
@@ -472,7 +501,7 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
 
       const decodedText = await scanner.scanFile(file, true);
       await scanner.clear();
-      onScanSuccess(String(decodedText).trim());
+      onScanSuccessRef.current(String(decodedText).trim());
     } catch (_error) {
       setScanError('未能从图片中识别到二维码，请更换更清晰的截图或二维码图片。');
     } finally {
@@ -483,11 +512,14 @@ const ScanOverlay = ({ onClose, onScanSuccess }) => {
   return (
     <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center animate-fade-in-up">
       <div className="w-full max-w-sm bg-white p-4 rounded-xl shadow-2xl">
-         <div className="flex justify-between items-center mb-2">
-             <h3 className="font-bold text-black">扫描建筑二维码</h3>
-             <button onClick={onClose}><X className="text-black" /></button>
+         <div className="flex items-center justify-between gap-3 mb-2">
+             <button onClick={onClose} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors">
+                <ChevronLeft size={18} /> 返回
+             </button>
+             <h3 className="font-bold text-black text-center flex-1">扫描建筑二维码</h3>
+             <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100 transition-colors"><X className="text-black" /></button>
          </div>
-         <div id="reader" className="w-full min-h-64 bg-gray-100 rounded-lg overflow-hidden"></div>
+         <div id={readerIdRef.current} className="w-full min-h-64 bg-gray-100 rounded-lg overflow-hidden"></div>
          <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3">
             <p className="text-sm text-slate-700 font-medium">{scanStatus}</p>
             {scanError && <p className="text-xs text-amber-700 mt-1 leading-5">{scanError}</p>}
@@ -1266,6 +1298,10 @@ const CuratorDashboardSection = () => {
                 label: item.timestamp ? new Date(item.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : `Run ${index + 1}`,
                 groupA: Number(item.group_a_hazard_rate ?? 0),
                 groupB: Number(item.group_b_hazard_rate ?? 0),
+                groupAHazardCount: Number(item.group_a_hazard_triggers ?? 0),
+                groupBHazardCount: Number(item.group_b_hazard_triggers ?? 0),
+                groupACount: Number(item.group_a_count ?? 0),
+                groupBCount: Number(item.group_b_count ?? 0),
                 pathA: Number(item.group_a_avg_path_length ?? 0),
                 pathB: Number(item.group_b_avg_path_length ?? 0),
                 timeA: Number(item.group_a_avg_completion_time ?? 0),
@@ -1282,12 +1318,34 @@ const CuratorDashboardSection = () => {
 
     useEffect(() => { fetchAbSummary(); }, []);
 
-    const formatPercent = (value) => `${(Number(value ?? 0) * 100).toFixed(1)}%`;
+    const formatPercent = (value) => `${(Math.min(Math.max(Number(value ?? 0), 0), 1) * 100).toFixed(1)}%`;
     const formatMeters = (value) => `${Number(value ?? 0).toFixed(1)}m`;
     const formatSeconds = (value) => `${Number(value ?? 0).toFixed(1)}s`;
+    const formatHazardAgentCount = (hazardCount, totalCount) => totalCount > 0 ? `${Math.min(Number(hazardCount ?? 0), Number(totalCount ?? 0))}/${Number(totalCount ?? 0)} 人` : '--';
     const latestUpdateText = latestSummary?.timestamp ? new Date(latestSummary.timestamp).toLocaleString('zh-CN', { hour12: false }) : '--';
     const phaseAcceptanceReady = latestSummary ? (typeof latestSummary.ready_for_phase4_acceptance === 'boolean' ? latestSummary.ready_for_phase4_acceptance : Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 && Number(latestSummary.group_b_avg_path_length ?? 0) >= Number(latestSummary.group_a_avg_path_length ?? 0)) : false;
-    const chartData = abHistory.length > 0 ? abHistory : [{ label: '暂无数据', groupA: 0, groupB: 0, pathA: 0, pathB: 0, timeA: 0, timeB: 0, accepted: false }];
+    const chartData = abHistory.length > 0 ? abHistory : [{ label: '暂无数据', groupA: 0, groupB: 0, groupAHazardCount: 0, groupBHazardCount: 0, groupACount: 0, groupBCount: 0, pathA: 0, pathB: 0, timeA: 0, timeB: 0, accepted: false }];
+    const groupAHazardRate = Number(latestSummary?.group_a_hazard_rate ?? 0);
+    const groupBHazardRate = Number(latestSummary?.group_b_hazard_rate ?? 0);
+    const groupAHazardCount = Number(latestSummary?.group_a_hazard_triggers ?? 0);
+    const groupBHazardCount = Number(latestSummary?.group_b_hazard_triggers ?? 0);
+    const groupACount = Number(latestSummary?.group_a_count ?? 0);
+    const groupBCount = Number(latestSummary?.group_b_count ?? 0);
+    const groupAPathLength = Number(latestSummary?.group_a_avg_path_length ?? 0);
+    const groupBPathLength = Number(latestSummary?.group_b_avg_path_length ?? 0);
+    const groupACompletionTime = Number(latestSummary?.group_a_avg_completion_time ?? 0);
+    const groupBCompletionTime = Number(latestSummary?.group_b_avg_completion_time ?? 0);
+    const hasLatestSummary = Boolean(latestSummary);
+    const riskDeltaText = groupAHazardRate > 0
+        ? `${(((groupAHazardRate - groupBHazardRate) / groupAHazardRate) * 100).toFixed(1)}%`
+        : (groupBHazardRate <= 0 ? '0.0%' : '--');
+    const pathDelta = groupBPathLength - groupAPathLength;
+    const timeDelta = groupBCompletionTime - groupACompletionTime;
+    const experimentSummaryText = hasLatestSummary
+        ? (phaseAcceptanceReady
+            ? '当前结果表明，B组在保持更长安全路径的前提下，触发过危险提示的代理占比已经明显低于基线。'
+            : '当前结果已形成对比趋势，但还需要继续补充样本，观察危险提示代理占比是否稳定下降。')
+        : '等待最新一轮 A/B 实验结果同步。';
 
     return (
         <section id="curator-section" className="py-24 bg-[#0f1115] landing-ui relative overflow-hidden">
@@ -1299,7 +1357,7 @@ const CuratorDashboardSection = () => {
                         Dimension 03 · Curator Mode
                     </div>
                     <h2 className="text-4xl font-black text-white mb-4 leading-tight font-serif tracking-tight">策展人模式：<br/><em className="text-purple-400 not-italic">全域数据实时监控</em></h2>
-                    <p className="text-base text-gray-400 max-w-xl leading-relaxed">A/B 实验数据看板，实时追踪 Group A（基线）与 Group B（优化）的风险率、路径长度与完成时间差异。</p>
+                    <p className="text-base text-gray-400 max-w-xl leading-relaxed">A/B 实验数据看板，实时追踪 Group A（基线）与 Group B（优化）在危险提示代理占比、路径长度与完成时间上的差异。</p>
                 </div>
                 <div className="flex items-center gap-4">
                     <div className="text-right hidden sm:block">
@@ -1325,15 +1383,15 @@ const CuratorDashboardSection = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
                 <div className="bg-[#15181e] rounded-2xl p-6 border border-[#2d3139] relative overflow-hidden group hover:border-[#3f4550] transition-all">
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500"></div>
-                    <div className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-3">Group A Hazard Rate</div>
+                    <div className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-3">Group A Hazard Exposure</div>
                     <div className="text-4xl font-mono font-bold text-white mb-2">{latestSummary ? formatPercent(latestSummary.group_a_hazard_rate) : '--'}</div>
-                    <div className="text-xs font-medium text-rose-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Baseline · 最短路策略</div>
+                    <div className="text-xs font-medium text-rose-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Baseline · {latestSummary ? formatHazardAgentCount(groupAHazardCount, groupACount) : '--'} 触发提示</div>
                 </div>
                 <div className="bg-[#15181e] rounded-2xl p-6 border border-[#2d3139] relative overflow-hidden group hover:border-[#3f4550] transition-all">
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500"></div>
-                    <div className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-3">Group B Hazard Rate</div>
+                    <div className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-3">Group B Hazard Exposure</div>
                     <div className="text-4xl font-mono font-bold text-white mb-2">{latestSummary ? formatPercent(latestSummary.group_b_hazard_rate) : '--'}</div>
-                    <div className="text-xs font-medium text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Optimized · 安全路策略</div>
+                    <div className="text-xs font-medium text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Optimized · {latestSummary ? formatHazardAgentCount(groupBHazardCount, groupBCount) : '--'} 触发提示</div>
                 </div>
                 <div className="bg-[#15181e] rounded-2xl p-6 border border-[#2d3139] relative overflow-hidden group hover:border-[#3f4550] transition-all">
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500"></div>
@@ -1354,16 +1412,21 @@ const CuratorDashboardSection = () => {
                 {/* Chart 1: Risk Rate */}
                 <div className="bg-[#15181e] p-6 rounded-3xl border border-[#2d3139] h-[320px] flex flex-col">
                     <div className="flex justify-between items-center mb-4">
-                        <h4 className="text-gray-200 font-bold text-sm flex items-center gap-2"><Activity size={16} className="text-rose-500"/> 风险率 A/B 对比</h4>
-                        <span className="text-[10px] font-bold bg-[#1a1d24] text-gray-400 px-2 py-1 rounded border border-[#2d3139]">RISK RATE</span>
+                        <h4 className="text-gray-200 font-bold text-sm flex items-center gap-2"><Activity size={16} className="text-rose-500"/> 危险提示代理占比 A/B 对比</h4>
+                        <span className="text-[10px] font-bold bg-[#1a1d24] text-gray-400 px-2 py-1 rounded border border-[#2d3139]">AGENT RATIO</span>
                     </div>
                     <div className="flex-1 w-full min-h-0">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#2d3139" vertical={false} />
                                 <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 10}} />
-                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 10}} tickFormatter={(val) => `${Math.round(val * 100)}%`} />
-                                <Tooltip formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, name === 'groupA' ? 'A组 (对照)' : 'B组 (实验)']} contentStyle={{backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '8px', fontSize: '12px', color: '#fff'}} />
+                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 10}} domain={[0, 1]} tickFormatter={(val) => formatPercent(val)} />
+                                <Tooltip formatter={(value, name, entry) => {
+                                    const isGroupA = name === 'groupA';
+                                    const hazardCount = isGroupA ? entry?.payload?.groupAHazardCount : entry?.payload?.groupBHazardCount;
+                                    const totalCount = isGroupA ? entry?.payload?.groupACount : entry?.payload?.groupBCount;
+                                    return [`${formatPercent(value)} · ${formatHazardAgentCount(hazardCount, totalCount)}`, isGroupA ? 'A组 (最短路)' : 'B组 (安全路)'];
+                                }} contentStyle={{backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '8px', fontSize: '12px', color: '#fff'}} />
                                 <Legend iconType="circle" wrapperStyle={{fontSize: '11px'}} formatter={(value) => <span className="text-gray-400 font-medium ml-1">{value === 'groupA' ? 'A组 (最短路)' : 'B组 (安全路)'}</span>} />
                                 <Line type="monotone" dataKey="groupA" stroke="#fb7185" strokeWidth={3} dot={{r: 4, strokeWidth: 2, fill: '#15181e'}} activeDot={{r: 6}} />
                                 <Line type="monotone" dataKey="groupB" stroke="#34d399" strokeWidth={3} dot={{r: 4, strokeWidth: 2, fill: '#15181e'}} activeDot={{r: 6}} />
@@ -1412,9 +1475,30 @@ const CuratorDashboardSection = () => {
                         </div>
                         <div className="bg-[#1a1d24] border border-[#2d3139] rounded-xl p-4 flex-1">
                             <div className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-3">Acceptance Criteria</div>
+                            <div className="mb-3 rounded-lg border border-[#2d3139] bg-[#15181e] px-3 py-2.5">
+                                <div className="flex items-center gap-2 text-[11px] font-semibold text-gray-200 mb-1">
+                                    <TrendingUp size={14} className={phaseAcceptanceReady ? 'text-emerald-400' : 'text-amber-400'} />
+                                    实验结论摘要
+                                </div>
+                                <p className="text-[11px] leading-relaxed text-gray-400">{experimentSummaryText}</p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 mb-3">
+                                <div className="rounded-lg border border-[#2d3139] bg-[#15181e] px-2 py-2">
+                                    <div className="text-[10px] text-gray-500 mb-1">占比变化</div>
+                                    <div className={`text-xs font-mono font-bold ${hasLatestSummary && groupBHazardRate <= groupAHazardRate ? 'text-emerald-400' : 'text-amber-400'}`}>{hasLatestSummary ? riskDeltaText : '--'}</div>
+                                </div>
+                                <div className="rounded-lg border border-[#2d3139] bg-[#15181e] px-2 py-2">
+                                    <div className="text-[10px] text-gray-500 mb-1">路径变化</div>
+                                    <div className={`text-xs font-mono font-bold ${pathDelta >= 0 ? 'text-blue-400' : 'text-amber-400'}`}>{hasLatestSummary ? `${pathDelta >= 0 ? '+' : ''}${pathDelta.toFixed(1)}m` : '--'}</div>
+                                </div>
+                                <div className="rounded-lg border border-[#2d3139] bg-[#15181e] px-2 py-2">
+                                    <div className="text-[10px] text-gray-500 mb-1">时间变化</div>
+                                    <div className={`text-xs font-mono font-bold ${timeDelta <= 0 ? 'text-purple-400' : 'text-amber-400'}`}>{hasLatestSummary ? `${timeDelta >= 0 ? '+' : ''}${timeDelta.toFixed(1)}s` : '--'}</div>
+                                </div>
+                            </div>
                             <div className="space-y-2.5">
                                 <div className="flex items-center justify-between gap-2 text-xs">
-                                    <span className="text-gray-400 font-medium">B组风险率 &lt; A组 70%</span>
+                                    <span className="text-gray-400 font-medium">B组危险提示占比 &lt; A组 70%</span>
                                     <span className={latestSummary && Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 ? 'text-emerald-400 font-bold font-mono' : 'text-amber-400 font-bold font-mono'}>{latestSummary && Number(latestSummary.group_b_hazard_rate ?? 0) < Number(latestSummary.group_a_hazard_rate ?? 0) * 0.7 ? 'PASS' : 'FAIL'}</span>
                                 </div>
                                 <div className="flex items-center justify-between gap-2 text-xs">
