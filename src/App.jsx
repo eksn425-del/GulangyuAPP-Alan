@@ -834,7 +834,7 @@ const BlindModeHome = ({ navigate, voice }) => {
     };
 
     return (
-        <main className="flex flex-col h-full bg-black text-[var(--care-yellow)] p-6 font-sans relative overflow-hidden">
+        <main className="flex flex-col h-full min-h-0 bg-black text-[var(--care-yellow)] p-6 font-sans relative overflow-hidden">
             <header className="py-6 border-b-4 border-[var(--care-yellow)] flex justify-between items-center">
                 <div><h1 className="text-4xl font-bold">四感导览</h1><p className="text-xl opacity-80">视障辅助模式</p></div>
                 <AccessibilityToggle className="bg-white/20 border-2 border-white text-white px-4 py-2 rounded-xl text-lg font-bold"/>
@@ -863,7 +863,7 @@ const HomePage = ({ navigate, setShowAdmin, voice }) => {
   const { buildingsData, currentLocation } = useContext(AppContext);
 
   return (
-    <main className="flex flex-col h-full bg-[#f8fafc] relative animate-fade-in-up overflow-hidden bg-piano-pattern">
+    <main className="flex flex-col h-full min-h-0 bg-[#f8fafc] relative animate-fade-in-up overflow-hidden bg-piano-pattern">
       {showScan && <ScanOverlay onClose={() => setShowScan(false)} onScanSuccess={(id) => { 
           setShowScan(false); 
           const target = buildingsData.find(b => b.id === id);
@@ -879,7 +879,7 @@ const HomePage = ({ navigate, setShowAdmin, voice }) => {
           } else { alert("定位完成：您当前位置附近 35 米内暂无历史建筑。"); }
       }} />}
       
-      <div className="relative h-[28%] bg-[var(--minnan-red)] text-white rounded-b-[40px] shadow-2xl overflow-hidden z-10 shape-swallowtail">
+      <div className="relative h-[28%] min-h-[220px] bg-[var(--minnan-red)] text-white rounded-b-[40px] shadow-2xl overflow-hidden z-10 shape-swallowtail">
         <img src={`${API_URL}/static/images/home_header.jpg`} className="absolute inset-0 w-full h-full object-cover opacity-50 mix-blend-multiply" alt="" onError={(e)=>e.target.style.display='none'}/>
         <div className="absolute top-0 right-0 p-4 opacity-20 transform rotate-12"><Music size={120} /></div>
         <div className="absolute top-0 w-full h-10 z-50" onDoubleClick={() => {
@@ -930,7 +930,7 @@ const BuildingListPage = ({ navigate, buildings }) => {
     if (!buildings || buildings.length === 0) return <div className="p-10 text-center">数据加载中...</div>;
 
     return (
-        <main className="flex flex-col h-full relative animate-fade-in overflow-hidden bg-[#f8fafc]">
+        <main className="flex flex-col h-full min-h-0 relative animate-fade-in overflow-hidden bg-[#f8fafc]">
             <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(90deg, transparent 0%, transparent 96%, rgba(0, 0, 0, 0.06) 96%, rgba(0, 0, 0, 0.06) 100%)`, backgroundSize: '20px 20px' }}></div>
             <div className="relative z-10 flex flex-col h-full">
                 <div className="p-6 pb-2 flex justify-end"><AccessibilityToggle /></div>
@@ -971,8 +971,8 @@ const BuildingListPage = ({ navigate, buildings }) => {
 const DetailPage = ({ building, navigate }) => {
     if (!building) return <div className="h-full flex flex-col items-center justify-center gap-4"><p>数据加载错误</p><button onClick={() => navigate('list')} className="px-4 py-2 bg-gray-200 rounded-lg">返回列表</button></div>;
     return (
-    <main className="flex flex-col h-full bg-[#f8fafc] relative animate-fade-in">
-      <div className="relative h-[45vh] shrink-0">
+    <main className="flex flex-col h-full min-h-0 bg-[#f8fafc] relative animate-fade-in">
+      <div className="relative h-[45vh] min-h-[280px] shrink-0">
         <img src={building.image} className="w-full h-full object-cover" alt="" />
         <div className="absolute inset-0 bg-gradient-to-t from-[#f4f1ea] via-transparent to-black/40"></div>
         <button onClick={() => navigate('list')} className="absolute top-8 left-6 w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center text-white border border-white/30 z-20 hover:bg-white/30"><ArrowLeft size={24}/></button>
@@ -1523,7 +1523,31 @@ export default function App() {
   const [showAppMockup, setShowAppMockup] = useState(false);
   const [showDevTooltip, setShowDevTooltip] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [isMobileAppMode, setIsMobileAppMode] = useState(false);
   const voice = useVoice();
+
+  useEffect(() => {
+    const updateMobileAppMode = () => {
+      const params = new URLSearchParams(window.location.search);
+      const forcedView = params.get('view');
+      if (forcedView === 'desktop') {
+        setIsMobileAppMode(false);
+        return;
+      }
+      if (forcedView === 'app') {
+        setIsMobileAppMode(true);
+        return;
+      }
+
+      const isNarrowViewport = window.innerWidth <= 1024;
+      const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+      setIsMobileAppMode(isNarrowViewport && isTouchDevice);
+    };
+
+    updateMobileAppMode();
+    window.addEventListener('resize', updateMobileAppMode);
+    return () => window.removeEventListener('resize', updateMobileAppMode);
+  }, []);
 
   useEffect(() => {
     const handleOpenAdmin = () => setShowAdmin(true);
@@ -1609,8 +1633,40 @@ export default function App() {
       }
   };
 
+  const appSurface = (
+    <>
+      {showAdmin && <AdminPanel buildings={buildingsData} setBuildings={setBuildingsData} closeAdmin={() => setShowAdmin(false)} />}
+      <div className="flex-1 min-h-0 overflow-hidden relative w-full h-full" id="main-content">
+        {isBlindMode ? (
+          screen === 'ai' ? <AiPage navigate={navigate} isBlindMode={true} /> : <BlindModeHome navigate={navigate} voice={voice} />
+        ) : (
+          <>
+            {screen === 'home' && <HomePage navigate={navigate} setShowAdmin={setShowAdmin} voice={voice} />}
+            {screen === 'list' && <BuildingListPage navigate={navigate} buildings={buildingsData} />}
+            {screen === 'detail' && <DetailPage building={selectedBuilding} navigate={navigate} voice={voice} />}
+            {screen === 'ai' && <AiPage navigate={navigate} isBlindMode={false} />}
+          </>
+        )}
+      </div>
+      <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 w-[140px] h-[5px] bg-black/80 rounded-full z-50"></div>
+    </>
+  );
+
+  if (isMobileAppMode) {
+    return (
+      <AppContext.Provider value={{ isBlindMode, toggleBlindMode, buildingsData, currentLocation, isMobileAppMode }}>
+        <GlobalStyles />
+        <div className="w-full bg-slate-950" style={{ minHeight: '100dvh' }}>
+          <div className="w-full bg-[#f8fafc] overflow-hidden relative flex flex-col" style={{ minHeight: '100dvh', height: '100dvh' }}>
+            {appSurface}
+          </div>
+        </div>
+      </AppContext.Provider>
+    );
+  }
+
   return (
-    <AppContext.Provider value={{ isBlindMode, toggleBlindMode, buildingsData, currentLocation }}>
+    <AppContext.Provider value={{ isBlindMode, toggleBlindMode, buildingsData, currentLocation, isMobileAppMode }}>
       <GlobalStyles />
       <div className="min-h-screen bg-page-canvas text-white font-sans app-root relative selection:bg-amber-400 selection:text-slate-900 overflow-x-hidden">
         <section className="px-4 pt-4 lg:px-6 lg:pt-6">
@@ -1685,20 +1741,7 @@ export default function App() {
                               <div className="w-5 h-3 border-[1.5px] border-black rounded-[2.5px] relative"><div className="absolute inset-0.5 bg-black rounded-[0.5px]"></div></div>
                           </div>
                       </div>
-                      {showAdmin && <AdminPanel buildings={buildingsData} setBuildings={setBuildingsData} closeAdmin={() => setShowAdmin(false)} />}
-                      <div className="flex-1 overflow-hidden relative w-full h-full" id="main-content">
-                        {isBlindMode ? (
-                            screen === 'ai' ? <AiPage navigate={navigate} isBlindMode={true} /> : <BlindModeHome navigate={navigate} voice={voice} />
-                        ) : (
-                            <>
-                                {screen === 'home' && <HomePage navigate={navigate} setShowAdmin={setShowAdmin} voice={voice} />}
-                                {screen === 'list' && <BuildingListPage navigate={navigate} buildings={buildingsData} />}
-                                {screen === 'detail' && <DetailPage building={selectedBuilding} navigate={navigate} voice={voice} />}
-                                {screen === 'ai' && <AiPage navigate={navigate} isBlindMode={false} />}
-                            </>
-                        )}
-                      </div>
-                      <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 w-[140px] h-[5px] bg-black/80 rounded-full z-50"></div>
+                      {appSurface}
                   </div>
                </div>
                <div className="absolute inset-0 rounded-[3.5rem] ring-1 ring-white/20 pointer-events-none z-50"></div>

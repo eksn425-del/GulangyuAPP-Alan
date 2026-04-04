@@ -13,7 +13,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends
 from fastapi.responses import FileResponse, JSONResponse 
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from openai import OpenAI
@@ -373,13 +373,251 @@ def infer_start_end_from_semantics(mentioned_nodes, user_msg):
 
     return start_candidate["node"], end_candidate["node"]
 
-# 定义 AI 请求格式
+def normalize_conversation_history(history, limit=8):
+    normalized = []
+    for item in history or []:
+        role = (item.role or "").strip().lower()
+        text = (item.text or "").strip()
+        if not text:
+            continue
+        if role in {"assistant", "ai"}:
+            normalized.append({"role": "assistant", "text": text})
+        elif role == "user":
+            normalized.append({"role": "user", "text": text})
+    return normalized[-limit:]
+
+
+def extract_mentioned_nodes_from_text(text, entrance_nodes, asr_confidence=None):
+    mentioned_nodes = []
+    navigation_intent = has_navigation_intent(text)
+    for n in entrance_nodes:
+        short_name = n['name'].replace("入口", "").replace("侧门", "")
+        canonical_pinyin = PLACE_PINYIN.get(short_name, get_pinyin(short_name))
+        pinyin_prefix = PLACE_PINYIN_PREFIX.get(short_name, get_place_prefix(short_name))
+        aliases = PLACE_ALIASES.get(short_name, [])
+        match_result = match_place_in_text(
+            short_name=short_name,
+            user_msg=text,
+            aliases=aliases,
+            canonical_pinyin=canonical_pinyin,
+            pinyin_prefix=pinyin_prefix,
+            navigation_intent=navigation_intent,
+            asr_confidence=asr_confidence
+        )
+        idx, score = match_result["idx"], match_result["score"]
+        threshold = adaptive_match_threshold(short_name, asr_confidence)
+        if idx != -1 and score >= threshold:
+            if not any(item['node']['node_id'] == n['node_id'] for item in mentioned_nodes):
+                mentioned_nodes.append({
+                    "idx": idx,
+                    "score": round(score, 4),
+                    "short_name": short_name,
+                    "method": match_result["method"],
+                    "node": n
+                })
+    return mentioned_nodes
+
+
+def infer_contextual_route_targets(user_msg, conversation_history, entrance_nodes, asr_confidence=None):
+    current_mentions = extract_mentioned_nodes_from_text(user_msg, entrance_nodes, asr_confidence)
+    if len(current_mentions) >= 2:
+        start_node, end_node = infer_start_end_from_semantics(current_mentions, user_msg)
+        return start_node, end_node, current_mentions
+
+    history_user_texts = [item["text"] for item in conversation_history if item["role"] == "user"]
+    history_mentions = []
+    for text in history_user_texts[-3:]:
+        for item in extract_mentioned_nodes_from_text(text, entrance_nodes, asr_confidence):
+            if not any(existing["node"]["node_id"] == item["node"]["node_id"] for existing in history_mentions):
+                history_mentions.append(item)
+
+    combined_mentions = current_mentions[:]
+    for item in history_mentions:
+        if not any(existing["node"]["node_id"] == item["node"]["node_id"] for existing in combined_mentions):
+            combined_mentions.append(item)
+
+    if not current_mentions or not history_mentions:
+        return None, None, combined_mentions
+
+    current_node = current_mentions[0]["node"]
+    previous_nodes = [item["node"] for item in history_mentions if item["node"]["node_id"] != current_node["node_id"]]
+    if not previous_nodes:
+        return None, None, combined_mentions
+
+    last_previous_node = previous_nodes[-1]
+    current_text = (user_msg or "").strip()
+    last_ai_text = next((item["text"] for item in reversed(conversation_history) if item["role"] == "assistant"), "")
+
+    start_markers = ["我在", "我现在在", "当前位置", "人在", "从这里", "从这", "我目前在", "目前在"]
+    end_markers = ["我要去", "我想去", "去", "到", "前往", "帮我去", "导航到"]
+    is_answering_start = any(marker in last_ai_text for marker in ["从哪里出发", "现在在哪里", "您现在在哪", "从哪儿出发"])
+    indicates_start = any(marker in current_text for marker in start_markers)
+    indicates_end = any(marker in current_text for marker in end_markers)
+
+    if indicates_start or is_answering_start:
+        return current_node, last_previous_node, combined_mentions
+    if indicates_end:
+        return last_previous_node, current_node, combined_mentions
+
+    if has_navigation_intent("\n".join(history_user_texts[-3:] + [current_text])):
+        return last_previous_node, current_node, combined_mentions
+
+    return None, None, combined_mentions
+
+
+class ChatHistoryItem(BaseModel):
+    role: str
+    text: str
+
+
+class ChatSessionState(BaseModel):
+    pending_action: str | None = None
+    current_topic: str | None = None
+    destination_name: str | None = None
+    start_name: str | None = None
+    recommended_places: list[str] = Field(default_factory=list)
+
+
 class ChatRequest(BaseModel):
     message: str
     user_bearing: float | None = None  # 👈 新增：用户的朝向（陀螺仪）
     strategy: str = "safest"
     asr_confidence: float | None = None
     test_mode: bool = False
+    conversation_history: list[ChatHistoryItem] = Field(default_factory=list)
+    session_state: ChatSessionState | None = None
+
+
+def normalize_session_state(session_state):
+    if not session_state:
+        return {
+            "pending_action": None,
+            "current_topic": None,
+            "destination_name": None,
+            "start_name": None,
+            "recommended_places": []
+        }
+
+    recommended_places = [
+        item.strip() for item in (session_state.recommended_places or [])
+        if isinstance(item, str) and item.strip()
+    ][:3]
+    return {
+        "pending_action": (session_state.pending_action or "").strip() or None,
+        "current_topic": (session_state.current_topic or "").strip() or None,
+        "destination_name": (session_state.destination_name or "").strip() or None,
+        "start_name": (session_state.start_name or "").strip() or None,
+        "recommended_places": recommended_places
+    }
+
+
+def is_brief_affirmative(text):
+    normalized = re.sub(r"[，。！？、\s~～!,.?]", "", text or "").lower()
+    if not normalized:
+        return False
+    affirmative_texts = {
+        "好", "好的", "好啊", "好呀", "行", "行吧", "可以", "可以的", "要", "要的",
+        "继续", "接着说", "接着讲", "嗯", "嗯嗯", "对", "对的", "是的", "没错"
+    }
+    if normalized in affirmative_texts:
+        return True
+    return len(normalized) <= 4 and any(token in normalized for token in ["好", "行", "可", "继", "对", "嗯", "要"])
+
+
+def refers_to_previous_target(text):
+    normalized = re.sub(r"[，。！？、\s~～!,.?]", "", text or "")
+    if not normalized:
+        return False
+    markers = [
+        "那里", "那边", "那个", "就去那", "去那里", "去那边", "按你推荐的",
+        "按这个", "就这个", "就它", "走这个", "去那个"
+    ]
+    return any(marker in normalized for marker in markers)
+
+
+def expand_user_message_with_session_state(user_msg, session_state):
+    text = (user_msg or "").strip()
+    if not text:
+        return text
+
+    pending_action = session_state.get("pending_action")
+    current_topic = session_state.get("current_topic")
+    destination_name = session_state.get("destination_name")
+    recommended_places = session_state.get("recommended_places") or []
+    anchor_place = destination_name or current_topic or (recommended_places[0] if recommended_places else None)
+
+    if pending_action == "awaiting_start_location" and anchor_place and refers_to_previous_target(text):
+        return f"我确认想去{anchor_place}，请继续帮我规划路线。用户补充回复：{text}"
+
+    if pending_action == "offer_recommendations" and (is_brief_affirmative(text) or refers_to_previous_target(text)):
+        focus_place = anchor_place or "刚才提到的景点"
+        return f"请继续根据刚才的建议，为我推荐接下来适合去的地点和游览顺序，重点围绕{focus_place}。用户补充回复：{text}"
+
+    if pending_action == "offer_more_intro" and is_brief_affirmative(text):
+        focus_place = anchor_place or "刚才提到的内容"
+        return f"请继续详细介绍{focus_place}，补充触觉、听觉特征和安全提醒。用户补充回复：{text}"
+
+    if pending_action in {"offer_route", "route_active"} and (is_brief_affirmative(text) or refers_to_previous_target(text)):
+        focus_place = destination_name or anchor_place or "目的地"
+        return f"请继续围绕去{focus_place}的路线或出行建议往下说。用户补充回复：{text}"
+
+    return text
+
+
+def infer_pending_action(ai_reply, route_info_text, navigation_intent, start_node, end_node):
+    reply = (ai_reply or "").strip()
+    if route_info_text and start_node and end_node:
+        return "route_active"
+    if navigation_intent and end_node and not start_node:
+        return "awaiting_start_location"
+    if any(marker in reply for marker in ["您现在在哪里", "从哪里出发", "从哪儿出发", "您目前在哪"]):
+        return "awaiting_start_location"
+    if any(marker in reply for marker in ["要不要我再推荐", "要不要我推荐", "我再给您推荐", "顺路再去", "还可以去"]):
+        return "offer_recommendations"
+    if any(marker in reply for marker in ["要不要我继续介绍", "继续给您介绍", "还想听", "接着说说", "展开讲讲"]):
+        return "offer_more_intro"
+    if any(marker in reply for marker in ["需要我为您导航", "要不要我帮您规划", "要不要我继续指路", "告诉您怎么走"]):
+        return "offer_route"
+    return None
+
+
+def build_session_state(previous_state, user_msg, ai_reply, mentioned_nodes, entrance_nodes, route_info_text, navigation_intent, start_node, end_node):
+    next_state = {
+        "pending_action": None,
+        "current_topic": previous_state.get("current_topic"),
+        "destination_name": previous_state.get("destination_name"),
+        "start_name": previous_state.get("start_name"),
+        "recommended_places": previous_state.get("recommended_places", [])[:3]
+    }
+
+    current_mentions = extract_mentioned_nodes_from_text(user_msg, entrance_nodes)
+    if current_mentions:
+        next_state["current_topic"] = current_mentions[-1]["node"]["name"]
+    elif mentioned_nodes:
+        next_state["current_topic"] = mentioned_nodes[-1]["node"]["name"]
+
+    if end_node:
+        next_state["destination_name"] = end_node["name"]
+    if start_node:
+        next_state["start_name"] = start_node["name"]
+
+    ai_mentions = extract_mentioned_nodes_from_text(ai_reply, entrance_nodes)
+    recommended_places = []
+    for item in ai_mentions:
+        node_name = item["node"]["name"]
+        if node_name not in recommended_places:
+            recommended_places.append(node_name)
+    if recommended_places:
+        next_state["recommended_places"] = recommended_places[:3]
+
+    next_state["pending_action"] = infer_pending_action(
+        ai_reply=ai_reply,
+        route_info_text=route_info_text,
+        navigation_intent=navigation_intent,
+        start_node=start_node,
+        end_node=end_node
+    )
+    return next_state
 
 # 🔐 定义管理员密码 (为了安全，最好和前端保持一致)
 ADMIN_PASSWORD = "8888"
@@ -480,8 +718,13 @@ async def upload_audio(file: UploadFile = File(...)):
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
     request_start_time = time.perf_counter()
-    user_msg = request.message.strip()
-    print(f"用户问: {user_msg}")
+    raw_user_msg = request.message.strip()
+    conversation_history = normalize_conversation_history(request.conversation_history)
+    session_state = normalize_session_state(request.session_state)
+    user_msg = expand_user_message_with_session_state(raw_user_msg, session_state)
+    print(f"用户问: {raw_user_msg}")
+    if user_msg != raw_user_msg:
+        print(f"上下文补全后: {user_msg}")
 
     try:
         # =================================================================
@@ -514,42 +757,20 @@ async def chat_with_ai(request: ChatRequest):
         if route_strategy not in {"safest", "shortest"}:
             route_strategy = "safest"
 
-        # 提取用户提到的建筑入口
         entrance_nodes = [n for n in nodes if n['node_type'] == '建筑入口']
-        navigation_intent = has_navigation_intent(user_msg)
-        
-        for n in entrance_nodes:
-            short_name = n['name'].replace("入口", "").replace("侧门", "")
-            canonical_pinyin = PLACE_PINYIN.get(short_name, get_pinyin(short_name))
-            pinyin_prefix = PLACE_PINYIN_PREFIX.get(short_name, get_place_prefix(short_name))
-            aliases = PLACE_ALIASES.get(short_name, [])
-            match_result = match_place_in_text(
-                short_name=short_name,
-                user_msg=user_msg,
-                aliases=aliases,
-                canonical_pinyin=canonical_pinyin,
-                pinyin_prefix=pinyin_prefix,
-                navigation_intent=navigation_intent,
-                asr_confidence=request.asr_confidence
-            )
-            idx, score = match_result["idx"], match_result["score"]
-            threshold = adaptive_match_threshold(short_name, request.asr_confidence)
-            if idx != -1 and score >= threshold:
-                if not any(item['node']['node_id'] == n['node_id'] for item in mentioned_nodes):
-                    mentioned_nodes.append({
-                        "idx": idx,
-                        "score": round(score, 4),
-                        "short_name": short_name,
-                        "method": match_result["method"],
-                        "node": n
-                    })
-                
+        history_user_texts = [item["text"] for item in conversation_history if item["role"] == "user"]
+        navigation_intent = has_navigation_intent(user_msg) or any(
+            has_navigation_intent(text) for text in history_user_texts[-3:]
+        )
+        start_node, end_node, mentioned_nodes = infer_contextual_route_targets(
+            user_msg=user_msg,
+            conversation_history=conversation_history,
+            entrance_nodes=entrance_nodes,
+            asr_confidence=request.asr_confidence
+        )
+
         route_info_text = ""
         if navigation_intent and mentioned_nodes:
-            # 语义优先：按“从/到/去”语义判定起终点，避免出现顺序误判
-            start_node, end_node = infer_start_end_from_semantics(mentioned_nodes, user_msg)
-            
-            # 调用底层多路径算法精准寻路，盲人模式默认 user_type="blind"，并传入用户的面朝方向 user_bearing
             if start_node and end_node:
                 route_result = route_engine.get_safest_route(
                     start_node['node_id'], 
@@ -684,6 +905,7 @@ async def chat_with_ai(request: ChatRequest):
         - 禁止使用"你看"、"映入眼帘"等视觉词。
         - 严禁脑补、瞎编知识库中不存在的精确路线（具体到米和左右转的路线只能由系统提供）。
         - 回复尽量控制在 150 字以内，清晰易懂。
+        - 当前窗口内的对话是连续的，必须结合之前几轮上下文理解“好的”“继续”“就去那里”“我现在在这里”这类省略表达。
         """
 
         # =================================================================
@@ -698,14 +920,26 @@ async def chat_with_ai(request: ChatRequest):
         if request.test_mode:
             ai_reply = "[TEST_MODE] 算法层执行完毕，已跳过LLM调用。"
         else:
+            llm_messages = [{"role": "system", "content": system_prompt}]
+            for item in conversation_history:
+                llm_messages.append({"role": item["role"], "content": item["text"]})
+            llm_messages.append({"role": "user", "content": corrected_user_msg})
             response = client.chat.completions.create(
                 model="qwen-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": corrected_user_msg}
-                ]
+                messages=llm_messages
             )
             ai_reply = response.choices[0].message.content
+        next_session_state = build_session_state(
+            previous_state=session_state,
+            user_msg=user_msg,
+            ai_reply=ai_reply,
+            mentioned_nodes=mentioned_nodes,
+            entrance_nodes=entrance_nodes,
+            route_info_text=route_info_text,
+            navigation_intent=navigation_intent,
+            start_node=start_node,
+            end_node=end_node
+        )
         latency_ms = round((time.perf_counter() - request_start_time) * 1000, 2)
         debug_info = {
             "recognized_places": [
@@ -725,11 +959,13 @@ async def chat_with_ai(request: ChatRequest):
             "asr_confidence": request.asr_confidence,
             "navigation_intent": navigation_intent,
             "strategy": route_strategy,
+            "context_turns": len(conversation_history),
+            "session_state": next_session_state,
             "latency_ms": latency_ms,
             "test_mode": request.test_mode,
             "match_method": next((item.get("method") for item in mentioned_nodes), None)
         }
-        return {"reply": ai_reply, "debug_info": debug_info}
+        return {"reply": ai_reply, "session_state": next_session_state, "debug_info": debug_info}
 
     except Exception as e:
         print(f"AI 出错了: {e}")
@@ -743,6 +979,8 @@ async def chat_with_ai(request: ChatRequest):
                 "matched_start_score": None,
                 "matched_end_score": None,
                 "strategy": (request.strategy or "safest").lower(),
+                "context_turns": len(conversation_history),
+                "session_state": session_state,
                 "latency_ms": latency_ms,
                 "test_mode": request.test_mode,
                 "match_method": next((item.get("method") for item in mentioned_nodes), None),

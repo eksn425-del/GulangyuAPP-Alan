@@ -234,7 +234,7 @@ def init_db():
     cursor = conn.cursor()
 
     # 1. 建表
-    print("⏳ 正在创建数据库表...")
+    print("正在创建数据库表...")
     
     # 建筑表 (保留)
     cursor.execute('''
@@ -308,9 +308,9 @@ def init_db():
                 b['history'], b['smell'], b['material'], b['safety_note'],
                 b['latitude'], b['longitude']
             ))
-        print("✅ 已写入基础 buildings 数据")
+        print("已写入基础 buildings 数据")
     else:
-        print("ℹ️ buildings 表已有数据，跳过基础灌库")
+        print("buildings 表已有数据，跳过基础灌库")
 
     if not _table_has_rows(cursor, "accessibility_nodes"):
         for n in nodes_data:
@@ -330,9 +330,9 @@ def init_db():
                 n['node_id'], n['node_type'], n['name'], n['lat_lng'], lat, lng,
                 n['audio_ambient'], n['smell'], image_path, n['model_path'], n.get('detail', '')
             ))
-        print("✅ 已写入基础 accessibility_nodes 数据")
+        print("已写入基础 accessibility_nodes 数据")
     else:
-        print("ℹ️ accessibility_nodes 表已有数据，跳过基础灌库")
+        print("accessibility_nodes 表已有数据，跳过基础灌库")
 
     if not _table_has_rows(cursor, "roads"):
         for r in roads_data:
@@ -345,13 +345,13 @@ def init_db():
                 r['edge_id'], r['start_node'], r['end_node'], r['material'],
                 r['width_m'], r['slope_deg'], r['friction'], r['note'], image_paths
             ))
-        print("✅ 已写入基础 roads 数据")
+        print("已写入基础 roads 数据")
     else:
-        print("ℹ️ roads 表已有数据，跳过基础灌库")
+        print("roads 表已有数据，跳过基础灌库")
     
     conn.commit()
     conn.close()
-    print(f"✅ 数据库检查完成！文件位置: {db_path}")
+    print(f"数据库检查完成，文件位置: {db_path}")
 
 # ==========================================
 # 👇 SQLAlchemy Setup

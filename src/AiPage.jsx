@@ -11,6 +11,7 @@ const AiPage = ({ navigate, isBlindMode }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [inputText, setInputText] = useState('');
+  const [sessionState, setSessionState] = useState(null);
   
   // 新增：记录手机罗盘朝向
   const [userBearing, setUserBearing] = useState(null);
@@ -89,6 +90,14 @@ const AiPage = ({ navigate, isBlindMode }) => {
   const handleSendMessage = async (text, asrConfidence = null) => {
     if (!text.trim()) return;
 
+    const conversationHistory = messages
+      .filter(msg => msg.text?.trim())
+      .slice(-8)
+      .map(msg => ({
+        role: msg.role === 'ai' ? 'assistant' : 'user',
+        text: msg.text.trim(),
+      }));
+
     // 1. 上屏用户消息
     setMessages(prev => [...prev, { role: 'user', text: text }]);
     setIsProcessing(true);
@@ -104,7 +113,9 @@ const AiPage = ({ navigate, isBlindMode }) => {
         body: JSON.stringify({ 
           message: text,
           user_bearing: userBearing, // 👈 发送朝向给后端
-          asr_confidence: asrConfidence
+          asr_confidence: asrConfidence,
+          conversation_history: conversationHistory,
+          session_state: sessionState,
         }),
       });
 
@@ -114,6 +125,7 @@ const AiPage = ({ navigate, isBlindMode }) => {
 
       const data = await response.json();
       const aiReply = data.reply;
+      setSessionState(data.session_state || null);
 
       // 3. 上屏 AI 回复
       setMessages(prev => [...prev, { role: 'ai', text: aiReply }]);
@@ -218,9 +230,12 @@ const AiPage = ({ navigate, isBlindMode }) => {
     : 'bg-[var(--minnan-red)] text-white shadow-sm';
 
   return (
-    <div className={`flex flex-col h-full w-full ${bgColor} relative transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex flex-col h-full min-h-0 w-full ${bgColor} relative transition-colors duration-300 overflow-hidden`}>
       {/* 顶部标题栏 */}
-      <div className={`p-4 flex items-center gap-3 sticky top-0 z-10 border-b ${isBlindMode ? 'bg-black border-[#FFD700]' : 'bg-white/90 backdrop-blur-md border-gray-200'}`}>
+      <div
+        className={`p-4 flex items-center gap-3 sticky top-0 z-10 border-b ${isBlindMode ? 'bg-black border-[#FFD700]' : 'bg-white/90 backdrop-blur-md border-gray-200'}`}
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1rem)' }}
+      >
         <button 
           onClick={() => navigate('home')} 
           className={`w-10 h-10 rounded-full border flex items-center justify-center transition-colors ${isBlindMode ? 'bg-black border-[#FFD700] text-[#FFD700] hover:bg-[#333]' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
@@ -240,7 +255,7 @@ const AiPage = ({ navigate, isBlindMode }) => {
       <div 
         ref={chatContainerRef} 
         className="flex-1 overflow-y-auto p-4 space-y-6 pb-40 scroll-smooth overscroll-contain"
-        style={{ scrollBehavior: 'auto' }} // 强制禁用全局平滑滚动，改用手动控制
+        style={{ scrollBehavior: 'auto', paddingBottom: 'calc(env(safe-area-inset-bottom) + 10rem)' }} // 强制禁用全局平滑滚动，改用手动控制
       >
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
@@ -275,7 +290,10 @@ const AiPage = ({ navigate, isBlindMode }) => {
       </div>
 
       {/* 底部语音控制区 */}
-      <div className={`absolute bottom-0 left-0 right-0 p-6 pb-8 flex flex-col justify-end items-center h-48 pointer-events-none ${isBlindMode ? 'bg-gradient-to-t from-black via-black/90 to-transparent' : 'bg-gradient-to-t from-[#f4f1ea] via-[#f4f1ea]/90 to-transparent'}`}>
+      <div
+        className={`absolute bottom-0 left-0 right-0 p-6 pb-8 flex flex-col justify-end items-center h-48 pointer-events-none ${isBlindMode ? 'bg-gradient-to-t from-black via-black/90 to-transparent' : 'bg-gradient-to-t from-[#f4f1ea] via-[#f4f1ea]/90 to-transparent'}`}
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}
+      >
         <div className="w-full max-w-xl mb-3 flex gap-2 pointer-events-auto">
           <input
             value={inputText}
