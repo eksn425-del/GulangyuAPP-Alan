@@ -42,8 +42,8 @@ def load_sample():
         FROM ab_test_summaries
         WHERE
             client_source = 'unity'
-            AND group_a_count >= 10
-            AND group_b_count >= 10
+            AND group_a_count = group_b_count
+            AND group_a_count IN (10, 12)
             AND group_a_hazard_rate BETWEEN 0 AND 1
             AND group_b_hazard_rate BETWEEN 0 AND 1
         ORDER BY id ASC
@@ -95,8 +95,8 @@ def build_stats(df):
     stats = {
         "sample_rule": {
             "client_source": "unity",
-            "group_a_count_min": 10,
-            "group_b_count_min": 10,
+            "group_size_equal": True,
+            "allowed_group_sizes": [10, 12],
             "hazard_rate_range": [0, 1],
         },
         "selected_ids": df["id"].astype(int).tolist(),
@@ -270,7 +270,7 @@ def write_outputs(df, stats):
     text = "\n".join(
         [
             "鼓浪屿 A/B 论文统计摘要",
-            f"样本筛选：client_source=unity, group_a_count>=10, group_b_count>=10, hazard_rate∈[0,1]",
+            f"样本筛选：client_source=unity, group_a_count=group_b_count, group_a_count∈{{10,12}}, hazard_rate∈[0,1]",
             f"固定样本 IDs：{stats['selected_ids']}",
             f"固定样本 test_run_ids：{', '.join(stats['selected_test_run_ids'])}",
             f"有效轮次：{stats['run_count']}",
